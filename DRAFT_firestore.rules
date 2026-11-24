@@ -1,0 +1,445 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ========================
+    // GLOBAL PRIMITIVES
+    // ========================
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isMasterAdminEmail() {
+      return isVerifiedUser() && request.auth.token.email == 'brasilportalvip@gmail.com';
+    }
+
+    function isAdmin() {
+      return isMasterAdminEmail() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // ========================
+    // VALIDATION BLUEPRINTS
+    // ========================
+    function isValidUserPublic(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'preferredLang', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'role', 'preferredLang', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+        data.role in ['tourist', 'merchant', 'concierge', 'admin', 'subadmin'] &&
+        data.preferredLang in ['pt', 'en', 'es'] &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivate(data) {
+      return data.keys().hasAll(['uid', 'email', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'phone', 'documentRef', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 32)) &&
+        (!('documentRef' in data) || (data.documentRef is string && data.documentRef.size() <= 64)) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'email', 'permissions', 'grantedBy', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'permissions', 'grantedBy', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.permissions is list && data.permissions.size() <= 20 &&
+        (data.permissions.size() == 0 || data.permissions[0] is string) &&
+        data.grantedBy is string && data.grantedBy.size() <= 160 &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidTouristDocument(data) {
+      return data.keys().hasAll(['id', 'userId', 'docType', 'label', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'docType', 'label', 'maskedNumber', 'expiresAt', 'createdAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.docType in ['passport', 'rg', 'voucher', 'ticket', 'insurance'] &&
+        data.label is string && data.label.size() >= 2 && data.label.size() <= 120 &&
+        (!('maskedNumber' in data) || (data.maskedNumber is string && data.maskedNumber.size() <= 64)) &&
+        (!('expiresAt' in data) || (data.expiresAt is string && data.expiresAt.size() <= 32)) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidFlightAlert(data) {
+      return data.keys().hasAll(['id', 'userId', 'originIata', 'destinationIata', 'targetPriceBrl', 'active', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'originIata', 'destinationIata', 'targetPriceBrl', 'includeMadrugada', 'active', 'createdAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.originIata is string && data.originIata.size() == 3 &&
+        data.destinationIata is string && data.destinationIata.size() == 3 &&
+        data.targetPriceBrl is number && data.targetPriceBrl >= 50 && data.targetPriceBrl <= 100000 &&
+        (!('includeMadrugada' in data) || data.includeMadrugada is bool) &&
+        data.active is bool &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidConversation(data) {
+      return data.keys().hasAll(['id', 'ownerUid', 'channel', 'subject', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'ownerUid', 'channel', 'subject', 'status', 'lastMessagePreview', 'unreadByOwner', 'unreadByStaff', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.ownerUid) &&
+        data.channel in ['tourist', 'merchant', 'admin', 'ai_handoff'] &&
+        data.subject is string && data.subject.size() >= 2 && data.subject.size() <= 160 &&
+        data.status in ['open', 'human_assigned', 'resolved'] &&
+        (!('lastMessagePreview' in data) || (data.lastMessagePreview is string && data.lastMessagePreview.size() <= 240)) &&
+        (!('unreadByOwner' in data) || data.unreadByOwner is number) &&
+        (!('unreadByStaff' in data) || data.unreadByStaff is number) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['id', 'conversationOwnerUid', 'senderUid', 'senderName', 'senderRole', 'text', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'conversationOwnerUid', 'senderUid', 'senderName', 'senderRole', 'text', 'attachmentUrl', 'readByStaff', 'createdAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.conversationOwnerUid) &&
+        isValidId(data.senderUid) &&
+        data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 100 &&
+        data.senderRole in ['tourist', 'merchant', 'admin', 'ai_agent'] &&
+        data.text is string && data.text.size() >= 1 && data.text.size() <= 2000 &&
+        (!('attachmentUrl' in data) || (data.attachmentUrl is string && data.attachmentUrl.size() <= 500)) &&
+        (!('readByStaff' in data) || data.readByStaff is bool) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'body', 'kind', 'read', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'title', 'body', 'kind', 'read', 'createdAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 140 &&
+        data.body is string && data.body.size() >= 2 && data.body.size() <= 400 &&
+        data.kind in ['booking', 'payment', 'flight', 'chat', 'plan', 'system'] &&
+        data.read is bool &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidCampaign(data) {
+      return data.keys().hasAll(['id', 'ownerUid', 'title', 'headline', 'channel', 'status', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'ownerUid', 'title', 'headline', 'caption', 'channel', 'status', 'impressions', 'clicks', 'contacts', 'conversions', 'createdAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.ownerUid) &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 140 &&
+        data.headline is string && data.headline.size() >= 2 && data.headline.size() <= 200 &&
+        (!('caption' in data) || (data.caption is string && data.caption.size() <= 1000)) &&
+        data.channel in ['instagram', 'google_ads', 'trivago', 'froc_featured'] &&
+        data.status in ['draft', 'active', 'paused'] &&
+        (!('impressions' in data) || (data.impressions is number && data.impressions >= 0)) &&
+        (!('clicks' in data) || (data.clicks is number && data.clicks >= 0)) &&
+        (!('contacts' in data) || (data.contacts is number && data.contacts >= 0)) &&
+        (!('conversions' in data) || (data.conversions is number && data.conversions >= 0)) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidEditorialPost(data) {
+      return data.keys().hasAll(['id', 'title', 'body', 'category', 'coverImage', 'contentHash', 'language', 'status', 'publishDate', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'title', 'body', 'category', 'destinationSlug', 'coverImage', 'contentHash', 'language', 'agentCode', 'status', 'publishDate', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.title is string && data.title.size() >= 4 && data.title.size() <= 180 &&
+        data.body is string && data.body.size() >= 20 && data.body.size() <= 4000 &&
+        data.category is string && data.category.size() >= 2 && data.category.size() <= 60 &&
+        (!('destinationSlug' in data) || (data.destinationSlug is string && data.destinationSlug.size() <= 100)) &&
+        data.coverImage is string && data.coverImage.size() <= 300 &&
+        data.contentHash is string && data.contentHash.size() >= 8 && data.contentHash.size() <= 128 &&
+        data.language in ['pt', 'en', 'es'] &&
+        (!('agentCode' in data) || (data.agentCode is string && data.agentCode.size() <= 40)) &&
+        data.status in ['pending_review', 'published', 'rejected'] &&
+        data.publishDate is string && data.publishDate.size() <= 20 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidAgent(data) {
+      return data.keys().hasAll(['id', 'code', 'name', 'department', 'state', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'code', 'name', 'department', 'specialty', 'state', 'tasksCompleted', 'errorCount', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.code is string && data.code.size() <= 32 &&
+        data.name is string && data.name.size() <= 120 &&
+        data.department is string && data.department.size() <= 80 &&
+        (!('specialty' in data) || (data.specialty is string && data.specialty.size() <= 160)) &&
+        data.state in ['idle', 'running', 'waiting', 'error'] &&
+        (!('tasksCompleted' in data) || data.tasksCompleted is number) &&
+        (!('errorCount' in data) || data.errorCount is number) &&
+        data.updatedAt is timestamp;
+    }
+
+    // ========================
+    // COLLECTIONS
+    // ========================
+    match /test/{docId} {
+      allow get: if isValidId(docId);
+      allow list, write: if false;
+    }
+
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && (isMasterAdminEmail() || (isVerifiedUser() && request.auth.uid == adminUid));
+      allow list: if isMasterAdminEmail() && resource.data.uid is string;
+      allow create: if isValidId(adminUid) && isMasterAdminEmail() && isValidAdminRecord(incoming()) && incoming().updatedAt == request.time;
+      allow update: if isValidId(adminUid) && isMasterAdminEmail() && isValidAdminRecord(incoming()) && incoming().uid == existing().uid && incoming().updatedAt == request.time;
+      allow delete: if isValidId(adminUid) && isMasterAdminEmail();
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && ((isVerifiedUser() && request.auth.uid == userId) || isAdmin());
+      allow list: if isMasterAdminEmail() && resource.data.uid is string;
+      allow create: if isValidId(userId) &&
+        isVerifiedUser() &&
+        request.auth.uid == userId &&
+        isValidUserPublic(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().role in ['tourist', 'merchant'] &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) &&
+        isVerifiedUser() &&
+        isValidUserPublic(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().updatedAt == request.time && (
+          isAdmin() || (
+            request.auth.uid == userId &&
+            incoming().role == existing().role &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'preferredLang', 'updatedAt'])
+          )
+        );
+      allow delete: if false;
+
+      match /private/{docId} {
+        allow get: if isValidId(userId) && isValidId(docId) && ((isVerifiedUser() && request.auth.uid == userId) || isAdmin());
+        allow list: if isVerifiedUser() && (request.auth.uid == userId || isMasterAdminEmail()) && resource.data.uid == userId;
+        allow create: if isValidId(userId) && isValidId(docId) &&
+          isVerifiedUser() &&
+          request.auth.uid == userId &&
+          isValidUserPrivate(incoming()) &&
+          incoming().uid == request.auth.uid &&
+          incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(docId) &&
+          isVerifiedUser() &&
+          isValidUserPrivate(incoming()) &&
+          incoming().uid == existing().uid &&
+          incoming().updatedAt == request.time && (
+            isAdmin() || (
+              request.auth.uid == userId &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['email', 'phone', 'documentRef', 'updatedAt'])
+            )
+          );
+        allow delete: if false;
+      }
+    }
+
+    match /tourist_documents/{docId} {
+      allow get: if isValidId(docId) && ((isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isMasterAdminEmail());
+      allow create: if isValidId(docId) &&
+        isVerifiedUser() &&
+        isValidTouristDocument(incoming()) &&
+        incoming().id == docId &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if isValidId(docId) &&
+        isVerifiedUser() &&
+        isValidTouristDocument(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() || (
+            existing().userId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['label', 'maskedNumber', 'expiresAt'])
+          )
+        );
+      allow delete: if isValidId(docId) && ((isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin());
+    }
+
+    match /flight_alerts/{alertId} {
+      allow get: if isValidId(alertId) && ((isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isMasterAdminEmail());
+      allow create: if isValidId(alertId) &&
+        isVerifiedUser() &&
+        isValidFlightAlert(incoming()) &&
+        incoming().id == alertId &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if isValidId(alertId) &&
+        isVerifiedUser() &&
+        isValidFlightAlert(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() || (
+            existing().userId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['targetPriceBrl', 'includeMadrugada', 'active'])
+          )
+        );
+      allow delete: if isValidId(alertId) && ((isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin());
+    }
+
+    match /conversations/{conversationId} {
+      allow get: if isValidId(conversationId) && ((isVerifiedUser() && resource.data.ownerUid == request.auth.uid) || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isMasterAdminEmail());
+      allow create: if isValidId(conversationId) &&
+        isVerifiedUser() &&
+        isValidConversation(incoming()) &&
+        incoming().id == conversationId &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().status == 'open' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(conversationId) &&
+        isVerifiedUser() &&
+        isValidConversation(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        existing().status != 'resolved' && (
+          isAdmin() || (
+            existing().ownerUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['lastMessagePreview', 'unreadByStaff', 'unreadByOwner', 'status', 'updatedAt']) &&
+            incoming().status in ['open', 'human_assigned']
+          )
+        );
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow get: if isValidId(conversationId) && isValidId(messageId) && (
+          isAdmin() || (
+            isVerifiedUser() &&
+            get(/databases/$(database)/documents/conversations/$(conversationId)).data.ownerUid == request.auth.uid
+          )
+        );
+        allow list: if isVerifiedUser() && (
+          resource.data.conversationOwnerUid == request.auth.uid || isMasterAdminEmail()
+        );
+        allow create: if isValidId(conversationId) && isValidId(messageId) &&
+          isVerifiedUser() &&
+          isValidMessage(incoming()) &&
+          incoming().id == messageId &&
+          incoming().senderUid == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          exists(/databases/$(database)/documents/conversations/$(conversationId)) &&
+          incoming().conversationOwnerUid == get(/databases/$(database)/documents/conversations/$(conversationId)).data.ownerUid && (
+            (isAdmin() && incoming().senderRole in ['admin', 'ai_agent']) || (
+              get(/databases/$(database)/documents/conversations/$(conversationId)).data.ownerUid == request.auth.uid &&
+              incoming().senderRole in ['tourist', 'merchant']
+            )
+          );
+        allow update: if isValidId(conversationId) && isValidId(messageId) &&
+          isAdmin() &&
+          isValidMessage(incoming()) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['readByStaff']);
+        allow delete: if false;
+      }
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && ((isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isMasterAdminEmail());
+      allow create: if isValidId(notificationId) &&
+        isVerifiedUser() &&
+        isValidNotification(incoming()) &&
+        incoming().id == notificationId &&
+        incoming().createdAt == request.time && (
+          isAdmin() || (
+            incoming().userId == request.auth.uid &&
+            incoming().read == false
+          )
+        );
+      allow update: if isValidId(notificationId) &&
+        isVerifiedUser() &&
+        isValidNotification(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() || (
+            existing().userId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['read'])
+          )
+        );
+      allow delete: if isValidId(notificationId) && ((isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin());
+    }
+
+    match /campaigns/{campaignId} {
+      allow get: if isValidId(campaignId) && ((isVerifiedUser() && resource.data.ownerUid == request.auth.uid) || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isMasterAdminEmail());
+      allow create: if isValidId(campaignId) &&
+        isVerifiedUser() &&
+        isValidCampaign(incoming()) &&
+        incoming().id == campaignId &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().impressions == 0 &&
+        incoming().clicks == 0 &&
+        incoming().contacts == 0 &&
+        incoming().conversions == 0 &&
+        incoming().createdAt == request.time;
+      allow update: if isValidId(campaignId) &&
+        isVerifiedUser() &&
+        isValidCampaign(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() || (
+            existing().ownerUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'headline', 'caption', 'channel', 'status'])
+          )
+        );
+      allow delete: if isValidId(campaignId) && ((isVerifiedUser() && resource.data.ownerUid == request.auth.uid) || isAdmin());
+    }
+
+    match /posts/{postId} {
+      allow get: if isValidId(postId) && (resource.data.status == 'published' || isAdmin());
+      allow list: if resource.data.status == 'published' || isMasterAdminEmail();
+      allow create: if isValidId(postId) &&
+        isAdmin() &&
+        isValidEditorialPost(incoming()) &&
+        incoming().id == postId &&
+        incoming().createdAt == request.time;
+      allow update: if isValidId(postId) &&
+        isAdmin() &&
+        isValidEditorialPost(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'body', 'status', 'category', 'coverImage']);
+      allow delete: if isValidId(postId) && isAdmin();
+    }
+
+    match /agents/{agentId} {
+      allow get: if isValidId(agentId) && isAdmin();
+      allow list: if isMasterAdminEmail() && resource.data.code is string;
+      allow create: if isValidId(agentId) &&
+        isAdmin() &&
+        isValidAgent(incoming()) &&
+        incoming().id == agentId &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(agentId) &&
+        isAdmin() &&
+        isValidAgent(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+  }
+}

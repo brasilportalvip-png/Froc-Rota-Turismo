@@ -1,0 +1,218 @@
+{
+  "entities": {
+    "UserPublicProfile": {
+      "title": "UserPublicProfile",
+      "description": "Public safe user profile in Firestore without PII",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "role": { "type": "string", "enum": ["tourist", "merchant", "concierge", "admin", "subadmin"] },
+        "preferredLang": { "type": "string", "enum": ["pt", "en", "es"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "role", "preferredLang", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "PII-isolated private user metadata accessible only to owner or admin",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 160 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "documentRef": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "updatedAt"]
+    },
+    "TouristDocument": {
+      "title": "TouristDocument",
+      "description": "Personal travel document or voucher reference owned by a tourist",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "docType": { "type": "string", "enum": ["passport", "rg", "voucher", "ticket", "insurance"] },
+        "label": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "maskedNumber": { "type": "string", "maxLength": 64 },
+        "expiresAt": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "docType", "label", "createdAt"]
+    },
+    "FlightAlert": {
+      "title": "FlightAlert",
+      "description": "Tourist price alert for flight routes and night/early-morning deals",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "originIata": { "type": "string", "minLength": 3, "maxLength": 3 },
+        "destinationIata": { "type": "string", "minLength": 3, "maxLength": 3 },
+        "targetPriceBrl": { "type": "number" },
+        "includeMadrugada": { "type": "boolean" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "originIata", "destinationIata", "targetPriceBrl", "active", "createdAt"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Real-time support or merchant-tourist conversation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "channel": { "type": "string", "enum": ["tourist", "merchant", "admin", "ai_handoff"] },
+        "subject": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "status": { "type": "string", "enum": ["open", "human_assigned", "resolved"] },
+        "lastMessagePreview": { "type": "string", "maxLength": 240 },
+        "unreadByOwner": { "type": "number" },
+        "unreadByStaff": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "channel", "subject", "status", "createdAt", "updatedAt"]
+    },
+    "ConversationMessage": {
+      "title": "ConversationMessage",
+      "description": "Message inside a real-time conversation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "conversationOwnerUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderUid": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "senderRole": { "type": "string", "enum": ["tourist", "merchant", "admin", "ai_agent"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "attachmentUrl": { "type": "string", "maxLength": 500 },
+        "readByStaff": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "conversationOwnerUid", "senderUid", "senderName", "senderRole", "text", "createdAt"]
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "Real-time notification scoped strictly to a single recipient UID",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "body": { "type": "string", "minLength": 2, "maxLength": 400 },
+        "kind": { "type": "string", "enum": ["booking", "payment", "flight", "chat", "plan", "system"] },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "title", "body", "kind", "read", "createdAt"]
+    },
+    "MerchantCampaign": {
+      "title": "MerchantCampaign",
+      "description": "Marketing campaign published by a merchant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "headline": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "caption": { "type": "string", "minLength": 2, "maxLength": 1000 },
+        "channel": { "type": "string", "enum": ["instagram", "google_ads", "trivago", "froc_featured"] },
+        "status": { "type": "string", "enum": ["draft", "active", "paused"] },
+        "impressions": { "type": "number" },
+        "clicks": { "type": "number" },
+        "contacts": { "type": "number" },
+        "conversions": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "title", "headline", "channel", "status", "createdAt"]
+    },
+    "EditorialPost": {
+      "title": "EditorialPost",
+      "description": "Daily curated editorial post with anti-duplication metadata",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 4, "maxLength": 180 },
+        "body": { "type": "string", "minLength": 20, "maxLength": 4000 },
+        "category": { "type": "string", "maxLength": 60 },
+        "destinationSlug": { "type": "string", "maxLength": 100 },
+        "coverImage": { "type": "string", "maxLength": 300 },
+        "contentHash": { "type": "string", "maxLength": 128 },
+        "language": { "type": "string", "enum": ["pt", "en", "es"] },
+        "agentCode": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["pending_review", "published", "rejected"] },
+        "publishDate": { "type": "string", "maxLength": 20 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "body", "category", "coverImage", "contentHash", "language", "status", "publishDate", "createdAt"]
+    },
+    "AgentRecord": {
+      "title": "AgentRecord",
+      "description": "Operational metadata for one of the 200 Froc Rota intelligent agents",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "code": { "type": "string", "maxLength": 32 },
+        "name": { "type": "string", "maxLength": 120 },
+        "department": { "type": "string", "maxLength": 80 },
+        "specialty": { "type": "string", "maxLength": 160 },
+        "state": { "type": "string", "enum": ["idle", "running", "waiting", "error"] },
+        "tasksCompleted": { "type": "number" },
+        "errorCount": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "code", "name", "department", "state", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublicProfile" },
+      "description": "Public profile metadata without PII"
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "PII-isolated private profile information"
+    },
+    "/admins/{adminUid}": {
+      "schema": "object",
+      "description": "Master and delegated administrator permission map"
+    },
+    "/tourist_documents/{docId}": {
+      "schema": { "$ref": "#/entities/TouristDocument" },
+      "description": "Owner-scoped tourist travel documents and vouchers"
+    },
+    "/flight_alerts/{alertId}": {
+      "schema": { "$ref": "#/entities/FlightAlert" },
+      "description": "Owner-scoped price drop alerts for flight radar"
+    },
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Real-time chat threads for tourists, merchants, and staff"
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ConversationMessage" },
+      "description": "Messages belonging to a conversation thread"
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/NotificationItem" },
+      "description": "User-scoped real-time notifications"
+    },
+    "/campaigns/{campaignId}": {
+      "schema": { "$ref": "#/entities/MerchantCampaign" },
+      "description": "Advertiser marketing campaigns synced with portal"
+    },
+    "/posts/{postId}": {
+      "schema": { "$ref": "#/entities/EditorialPost" },
+      "description": "Daily editorial posts (5 posts/day with deduplication)"
+    },
+    "/agents/{agentId}": {
+      "schema": { "$ref": "#/entities/AgentRecord" },
+      "description": "200 specialized agent status records monitored by Admin Master"
+    },
+    "/test/{docId}": {
+      "schema": "object",
+      "description": "Read-only connection validation document"
+    }
+  }
+}
