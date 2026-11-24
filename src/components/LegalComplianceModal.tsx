@@ -4,7 +4,7 @@ import { FuturisticModalHeader } from './DesignSystem.tsx';
 
 export const LegalComplianceModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   return (
-    <div className="fixed inset-0 z-[80] bg-black/65 backdrop-blur-xs overflow-y-auto p-4 md:p-8 flex justify-center items-start">
+    <div role="dialog" aria-modal="true" aria-label="Governança, LGPD, CDC e Termos de Uso" className="fixed inset-0 z-[80] bg-black/65 backdrop-blur-xs overflow-y-auto p-4 md:p-8 flex justify-center items-start">
       <div className="w-full max-w-2xl bg-[#FFFFFF] rounded-2xl border-2 border-[#111111] shadow-2xl overflow-hidden my-6 froc-animate-modal">
         <FuturisticModalHeader
           title="Governança, LGPD, CDC e Termos de Uso"

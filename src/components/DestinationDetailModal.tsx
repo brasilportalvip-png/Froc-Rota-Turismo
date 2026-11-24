@@ -88,7 +88,7 @@ export const DestinationDetailModal: React.FC<DestinationDetailModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/65 backdrop-blur-xs overflow-y-auto p-4 md:p-8 flex justify-center items-start">
+    <div role="dialog" aria-modal="true" aria-label={destination.name} className="fixed inset-0 z-[70] bg-black/65 backdrop-blur-xs overflow-y-auto p-4 md:p-8 flex justify-center items-start">
       <div className="w-full max-w-4xl bg-[#FFFFFF] rounded-2xl border-2 border-[#111111] shadow-2xl overflow-hidden my-4 froc-animate-modal">
         <FuturisticModalHeader
           title={destination.name}
