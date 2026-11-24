@@ -719,6 +719,11 @@ apiRouter.post('/payments/verify-server', requireAuth, async (req: AuthRequest, 
       });
     }
 
+    // Só reserva aguardando pagamento pode ser confirmada (cancelada/estornada/já confirmada não volta a "paga").
+    if (booking.status !== 'pending_payment') {
+      return res.status(409).json({ error: `Reserva não está aguardando pagamento (status atual: ${booking.status}).` });
+    }
+
     const ref = `SBX-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     const updated = await db
       .update(bookings)
@@ -1502,7 +1507,7 @@ apiRouter.get(
   }
 );
 
-apiRouter.patch('/admin/merchants/:id/verify', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+apiRouter.patch('/admin/merchants/:id/verify', requireAuth, requireAdmin, requireAdminPermission('merchants'), async (req: AuthRequest, res) => {
   try {
     const merchantId = Number(req.params.id);
     const { status } = req.body ?? {};
@@ -1538,7 +1543,7 @@ apiRouter.patch('/admin/merchants/:id/verify', requireAuth, requireAdmin, async 
   }
 });
 
-apiRouter.patch('/admin/plans/:id', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+apiRouter.patch('/admin/plans/:id', requireAuth, requireAdmin, requireAdminPermission('finance'), async (req: AuthRequest, res) => {
   try {
     const planId = Number(req.params.id);
     const { monthlyPriceCents, commissionBps, maxListings } = req.body ?? {};
@@ -1568,7 +1573,7 @@ apiRouter.patch('/admin/plans/:id', requireAuth, requireAdmin, async (req: AuthR
   }
 });
 
-apiRouter.post('/admin/coupons', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+apiRouter.post('/admin/coupons', requireAuth, requireAdmin, requireAdminPermission('merchants'), async (req: AuthRequest, res) => {
   try {
     const { code, discountPercent, maxUses = 100 } = req.body ?? {};
     const cleanCode = String(code ?? '').trim().toUpperCase();
@@ -1600,7 +1605,7 @@ apiRouter.post('/admin/coupons', requireAuth, requireAdmin, async (req: AuthRequ
   }
 });
 
-apiRouter.patch('/admin/concierge/:id', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+apiRouter.patch('/admin/concierge/:id', requireAuth, requireAdmin, requireAdminPermission('overview'), async (req: AuthRequest, res) => {
   try {
     const reqId = Number(req.params.id);
     const { status, proposalSummary, proposalAmountBrl } = req.body ?? {};
@@ -1630,7 +1635,7 @@ apiRouter.patch('/admin/concierge/:id', requireAuth, requireAdmin, async (req: A
   }
 });
 
-apiRouter.patch('/admin/reports/:id', requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+apiRouter.patch('/admin/reports/:id', requireAuth, requireAdmin, requireAdminPermission('overview'), async (req: AuthRequest, res) => {
   try {
     const id = Number(req.params.id);
     const status = ['resolved', 'dismissed', 'open'].includes(req.body?.status)

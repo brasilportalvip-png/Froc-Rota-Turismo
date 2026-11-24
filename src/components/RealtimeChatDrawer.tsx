@@ -90,17 +90,13 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
   // WebSocket live event handler
   useEffect(() => {
     if (!lastRealtimeEvent || lastRealtimeEvent.type !== 'chat:message') return;
-    const payload = lastRealtimeEvent.data as {
-      conversationId?: number;
-      message?: ChatMessage;
-    };
-    if (payload?.conversationId && payload.conversationId === selectedConv?.id && payload.message) {
-      setMessages((prev) =>
-        prev.some((m) => m.id === payload.message!.id) ? prev : [...prev, payload.message!]
-      );
+    // O aviso do WebSocket traz só o id da conversa (sem o texto): busca as mensagens pela API autenticada.
+    const payload = lastRealtimeEvent.data as { conversationId?: number };
+    if (payload?.conversationId && payload.conversationId === selectedConv?.id) {
+      loadMessages(selectedConv.id);
     }
     loadConversations();
-  }, [lastRealtimeEvent, selectedConv?.id, loadConversations]);
+  }, [lastRealtimeEvent, selectedConv?.id, loadConversations, loadMessages]);
 
   // Firestore real-time mirror listener scoped to authenticated ownerUid
   useEffect(() => {

@@ -59,7 +59,7 @@ import {
   recordImmutableLedgerEntry,
   resolvePricingRule,
 } from '../services/pricing.service.ts';
-import { broadcastRealtimeEvent } from '../services/realtime.service.ts';
+import { broadcastRealtimeEvent, chatMessageNotice } from '../services/realtime.service.ts';
 import { getTravelIntegrationsStatus } from '../services/travel.service.ts';
 import { listActivePopups, POPUP_CATEGORIES } from '../services/popups.service.ts';
 
@@ -565,6 +565,12 @@ expansionRouter.post('/merchant/plans/verify-server', requireAuth, async (req: A
     }
     if (process.env.MERCADOPAGO_ACCESS_TOKEN && user.role !== 'admin') {
       return res.status(400).json({ error: 'Confirmação de assinatura ativa somente via webhook do gateway.' });
+    }
+
+    // Só assinatura aguardando pagamento é ativada: chamar de novo não pode renovar de graça
+    // nem lançar outra cobrança no livro financeiro.
+    if (sub.status !== 'pending_payment') {
+      return res.status(409).json({ error: `Assinatura não está aguardando pagamento (status atual: ${sub.status}).` });
     }
 
     const planRows = await db.select().from(merchantPlans).where(eq(merchantPlans.id, sub.planId)).limit(1);
@@ -1093,11 +1099,7 @@ expansionRouter.post('/chat/conversations', requireAuth, async (req: AuthRequest
         })
         .returning();
 
-      broadcastRealtimeEvent({
-        type: 'chat:message',
-        channel: conv.conversationCode,
-        data: { conversationId: conv.id, message: msg },
-      });
+      broadcastRealtimeEvent(chatMessageNotice(conv));
     }
 
     res.status(201).json({ conversation: conv });
@@ -1190,11 +1192,7 @@ expansionRouter.post('/chat/conversations/:id/messages', requireAuth, async (req
         .returning();
       createdMsgs.push(userMsg);
 
-      broadcastRealtimeEvent({
-        type: 'chat:message',
-        channel: conv.conversationCode,
-        data: { conversationId: conv.id, message: userMsg },
-      });
+      broadcastRealtimeEvent(chatMessageNotice(conv));
     }
 
     if (requestHumanHandoff) {
@@ -1234,11 +1232,7 @@ expansionRouter.post('/chat/conversations/:id/messages', requireAuth, async (req
           .returning();
         createdMsgs.push(aiMsg);
 
-        broadcastRealtimeEvent({
-          type: 'chat:message',
-          channel: conv.conversationCode,
-          data: { conversationId: conv.id, message: aiMsg },
-        });
+        broadcastRealtimeEvent(chatMessageNotice(conv));
       } catch {
         // AI key unavailable or failed; keep human thread intact
       }
@@ -1728,7 +1722,7 @@ expansionRouter.post('/admin/permissions', requireAuth, requireAdmin, async (req
   }
 });
 
-expansionRouter.get('/admin/integrations', requireAuth, requireAdmin, async (_req, res) => {
+expansionRouter.get('/admin/integrations', requireAuth, requireAdmin, requireAdminPermission('integrations'), async (_req, res) => {
   const oauthList = await db
     .select({
       id: oauthConnections.id,

@@ -16,8 +16,11 @@ export interface AuthRequest extends Request {
 export async function getOrCreateDbUser(decoded: DecodedIdToken) {
   const email = decoded.email || `${decoded.uid}@froc.local`;
   const name = decoded.name || email.split('@')[0] || 'Viajante';
-  const isBootstrapAdmin =
-    email.toLowerCase() === ADMIN_BOOTSTRAP_EMAIL && decoded.email_verified !== false;
+  // Papel de administrador só com e-mail confirmado pelo provedor (igual às regras do Firestore:
+  // request.auth.token.email_verified == true). Sem a confirmação, qualquer conta com o e-mail
+  // digitado viraria admin/subadmin.
+  const emailVerified = decoded.email_verified === true;
+  const isBootstrapAdmin = email.toLowerCase() === ADMIN_BOOTSTRAP_EMAIL && emailVerified;
 
   try {
     const existing = await db.select().from(users).where(eq(users.uid, decoded.uid)).limit(1);
@@ -27,7 +30,7 @@ export async function getOrCreateDbUser(decoded: DecodedIdToken) {
       .where(and(eq(adminPermissions.email, email.toLowerCase()), eq(adminPermissions.active, true)))
       .limit(1);
 
-    const isSubAdmin = subAdminRows.length > 0;
+    const isSubAdmin = emailVerified && subAdminRows.length > 0;
 
     if (existing.length > 0) {
       const current = existing[0];
@@ -110,6 +113,9 @@ export const requireAdmin = async (req: AuthRequest, res: Response, next: NextFu
   if (!req.dbUser) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
+  if ((req.dbUser.role === 'admin' || req.dbUser.role === 'subadmin') && req.authUser?.email_verified !== true) {
+    return res.status(403).json({ error: 'Forbidden: e-mail não verificado para acesso administrativo' });
+  }
   if (req.dbUser.role === 'admin') {
     req.adminPermissions = ['*'];
     return next();
@@ -134,13 +140,15 @@ export const requireAdmin = async (req: AuthRequest, res: Response, next: NextFu
 };
 
 export const requireAdminPermission = (permission: string) => {
-  return (req: AuthRequest, res: Response, next: NextFunction) => {
+  const check = (req: AuthRequest, res: Response, next: NextFunction) => {
     const perms = req.adminPermissions ?? [];
     if (perms.includes('*') || perms.includes(permission)) {
       return next();
     }
     return res.status(403).json({ error: `Forbidden: Missing admin permission '${permission}'` });
   };
+  // Marca a permissão exigida: o teste confere que toda rota /admin/ exige uma.
+  return Object.assign(check, { adminPermission: permission });
 };
 
 // Simple sliding-window rate limiter per IP

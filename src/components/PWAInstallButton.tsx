@@ -98,7 +98,7 @@ export const PWAInstallButton: React.FC = () => {
       </div>
 
       {showGuideModal && (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/65 p-4 overflow-y-auto">
+        <div role="dialog" aria-modal="true" aria-label="Instalar Froc Rota" className="fixed inset-0 z-[95] flex items-center justify-center bg-black/65 p-4 overflow-y-auto">
           <div className="w-full max-w-md rounded-2xl bg-[#FFFFFF] border-2 border-[#111111] shadow-2xl overflow-hidden froc-animate-modal">
             <FuturisticModalHeader
               title="INSTALAR FROC ROTA"
