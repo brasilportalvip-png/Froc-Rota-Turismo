@@ -42,6 +42,7 @@ import {
   getPaymentGatewayStatus,
   verifyMercadoPagoWebhookSignature,
 } from '../services/payment.service.ts';
+import { getAppBaseUrl } from '../services/oauth.service.ts';
 import { recordImmutableLedgerEntry } from '../services/pricing.service.ts';
 import {
   getTravelIntegrationsStatus,
@@ -530,7 +531,7 @@ apiRouter.post('/bookings', requireAuth, rateLimit(20, 60000), async (req: AuthR
     let checkoutUrl: string | null = null;
     if (process.env.MERCADOPAGO_ACCESS_TOKEN) {
       try {
-        const appUrl = process.env.APP_URL || 'http://localhost:3000';
+        const appUrl = getAppBaseUrl();
         const pref = await createMercadoPagoPreference({
           bookingCode: result.booking.bookingCode,
           title: result.listing.title,

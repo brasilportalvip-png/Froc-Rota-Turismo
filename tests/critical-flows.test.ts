@@ -242,7 +242,13 @@ test('Travel integration refuses to fabricate flight offers when Amadeus credent
     assert.deepEqual(result.offers, []);
     assert.ok(Array.isArray(result.integrations));
     assert.equal(getTravelIntegrationsStatus()[0].configured, false);
-    assert.equal(getPaymentGatewayStatus().mercadopago.configured, Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN));
+    const pgStatus = getPaymentGatewayStatus();
+    assert.equal(pgStatus.mercadopago.configured, Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN));
+    assert.equal(
+      pgStatus.mercadopago.webhookSecretConfigured,
+      Boolean(process.env.MERCADOPAGO_WEBHOOK_SECRET)
+    );
+    assert.equal('stripe' in pgStatus, false);
   } finally {
     if (prevId !== undefined) process.env.AMADEUS_CLIENT_ID = prevId;
     if (prevSec !== undefined) process.env.AMADEUS_CLIENT_SECRET = prevSec;

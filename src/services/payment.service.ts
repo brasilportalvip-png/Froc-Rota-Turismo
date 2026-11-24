@@ -5,35 +5,41 @@ export function getPaymentGatewayStatus() {
     process.env.MERCADOPAGO_ACCESS_TOKEN &&
       process.env.MERCADOPAGO_ACCESS_TOKEN.trim().length > 10
   );
+  const mpWebhookConfigured = Boolean(
+    process.env.MERCADOPAGO_WEBHOOK_SECRET &&
+      process.env.MERCADOPAGO_WEBHOOK_SECRET.trim().length > 10
+  );
+  const mpPublicKey =
+    process.env.VITE_MERCADOPAGO_PUBLIC_KEY || process.env.MERCADOPAGO_PUBLIC_KEY || null;
   const mpOauthConfigured = Boolean(
     process.env.MERCADOPAGO_CLIENT_ID && process.env.MERCADOPAGO_CLIENT_SECRET
-  );
-  const stripeConfigured = Boolean(
-    process.env.STRIPE_SECRET_KEY &&
-      process.env.STRIPE_SECRET_KEY.trim().length > 10
   );
 
   return {
     mercadopago: {
       configured: mpConfigured,
+      webhookSecretConfigured: mpWebhookConfigured,
+      publicKeyConfigured: Boolean(mpPublicKey),
+      publicKey: mpPublicKey,
       oauthSplitConfigured: mpOauthConfigured,
       mode: mpConfigured ? 'live_api' : 'awaiting_credentials',
-      supportedFlows: ['Checkout Pro', 'Checkout Transparente (Bricks)', 'Marketplace Split 1:1 (via OAuth vendedor)', 'Webhooks HMAC-SHA256', 'Reembolso & Conciliação'],
+      supportedFlows: [
+        'Checkout Pro',
+        'Checkout Transparente (Bricks)',
+        'Marketplace Split 1:1 (via OAuth vendedor)',
+        'Webhooks HMAC-SHA256',
+        'Reembolso & Conciliação',
+      ],
       splitComplianceNote:
         'O Split de Pagamentos no Mercado Pago exige autorização OAuth prévia da conta do vendedor (1:1 por pedido). Split 1:N simultâneo depende de aprovação comercial específica junto ao Mercado Pago.',
       docsUrl: 'https://www.mercadopago.com.br/developers/pt/docs/checkout-pro/landing',
       requiredEnvVars: [
         'MERCADOPAGO_ACCESS_TOKEN',
         'MERCADOPAGO_WEBHOOK_SECRET',
+        'VITE_MERCADOPAGO_PUBLIC_KEY',
         'MERCADOPAGO_CLIENT_ID',
         'MERCADOPAGO_CLIENT_SECRET',
       ],
-    },
-    stripe: {
-      configured: stripeConfigured,
-      mode: stripeConfigured ? 'live_api' : 'awaiting_credentials',
-      docsUrl: 'https://stripe.com/docs/api',
-      requiredEnvVars: ['STRIPE_SECRET_KEY'],
     },
   };
 }

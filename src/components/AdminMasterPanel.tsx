@@ -81,7 +81,13 @@ interface FinancePayload {
 interface IntegrationsPayload {
   travel: Array<{ provider: string; configured: boolean; notes: string }>;
   payments: {
-    mercadopago: { configured: boolean; mode: string; splitSupported?: boolean };
+    mercadopago: {
+      configured: boolean;
+      webhookSecretConfigured?: boolean;
+      publicKeyConfigured?: boolean;
+      mode: string;
+      splitSupported?: boolean;
+    };
   };
   googleBusinessOAuth: { configured: boolean; redirectUri: string };
   mercadoPagoOAuth: { configured: boolean; redirectUri: string };
@@ -1413,16 +1419,20 @@ export const AdminMasterPanel: React.FC<{
                       Callback: {integrations.googleBusinessOAuth.redirectUri}
                     </p>
                   </div>
-                  <div className="p-4 rounded-xl border border-[#111111]/15">
+                  <div className="p-4 rounded-xl border border-[#111111]/15 space-y-1">
                     <div className="flex justify-between font-semibold">
-                      <span>Mercado Pago Split &amp; OAuth Seller</span>
+                      <span>Mercado Pago (Gateway Único + OAuth Seller)</span>
                       <span className={integrations.payments.mercadopago.configured ? 'text-[#111111]' : 'text-[#92400E]'}>
                         {integrations.payments.mercadopago.configured
-                          ? 'Produção'
+                          ? 'Produção (Token Ativo)'
                           : 'Modo Sandbox Server-Verified'}
                       </span>
                     </div>
-                    <p className="text-[11px] font-mono-tabular text-[#111111]/70 mt-1 break-all">
+                    <p className="text-[11px] font-mono-tabular text-[#111111]/70 break-all">
+                      Public Key: {integrations.payments.mercadopago.publicKeyConfigured ? 'Configurada' : 'Pendente'} · Webhook HMAC:{' '}
+                      {integrations.payments.mercadopago.webhookSecretConfigured ? 'Ativo' : 'Pendente'}
+                    </p>
+                    <p className="text-[11px] font-mono-tabular text-[#111111]/70 break-all">
                       Callback OAuth: {integrations.mercadoPagoOAuth.redirectUri}
                     </p>
                   </div>

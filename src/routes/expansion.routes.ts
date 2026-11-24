@@ -48,6 +48,7 @@ import {
   buildMercadoPagoSellerAuthUrl,
   exchangeGoogleBusinessCodeAndSync,
   exchangeMercadoPagoSellerCode,
+  getAppBaseUrl,
   getGoogleBusinessOAuthConfig,
   getMercadoPagoOAuthConfig,
   verifyOAuthState,
@@ -525,7 +526,7 @@ expansionRouter.post('/merchant/plans/subscribe', requireAuth, async (req: AuthR
         title: `Plano ${plan.name} (${plan.durationDays} dias) - Froc Rota`,
         amountCents: plan.monthlyPriceCents,
         payerEmail: user.email,
-        appUrl: process.env.APP_URL || 'http://localhost:3000',
+        appUrl: getAppBaseUrl(),
       });
       checkoutUrl = pref?.init_point ?? null;
     }

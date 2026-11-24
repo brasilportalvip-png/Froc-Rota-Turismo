@@ -9,6 +9,7 @@ import { db } from './src/db/index.ts';
 import { destinations, editorialPosts, listings } from './src/db/schema.ts';
 import { eq } from 'drizzle-orm';
 import { initRealtimeWebSocketServer } from './src/services/realtime.service.ts';
+import { getAppBaseUrl } from './src/services/oauth.service.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,7 +35,7 @@ async function startServer() {
   // Dynamic SEO Sitemap (includes Destinations, Active Listings, and Published Editorial Posts)
   app.get('/sitemap.xml', async (_req, res) => {
     try {
-      const baseUrl = (process.env.APP_URL || 'https://frocrota.turismo').replace(/\/+$/, '');
+      const baseUrl = getAppBaseUrl();
       const [dests, activeListings, publishedPosts] = await Promise.all([
         db.select({ slug: destinations.slug }).from(destinations),
         db
