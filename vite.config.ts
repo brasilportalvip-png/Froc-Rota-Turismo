@@ -131,6 +131,9 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          // /api nunca é página do app: sem isso o service worker devolvia a página inicial para
+          // /api/health e para os retornos do Mercado Pago/Google em /api/oauth/... (o login do parceiro não concluía).
+          navigateFallbackDenylist: [/^\/api\//],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
