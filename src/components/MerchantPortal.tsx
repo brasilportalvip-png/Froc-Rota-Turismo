@@ -26,6 +26,7 @@ import {
   ReviewItem,
 } from '../types.ts';
 import { useApp } from '../context/AppContext.tsx';
+import { IdentityVerification } from './IdentityVerification.tsx';
 import { formatMoney } from '../i18n/translations.ts';
 import { FuturisticModalHeader, SecurityPinCard } from './DesignSystem.tsx';
 
@@ -56,7 +57,11 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
   onClose,
   onListingCreated,
 }) => {
-  const { apiFetch, currency, dbUser, loginWithGoogle, notify, refreshProfile } = useApp();
+  const { apiFetch, currency, dbUser, emailVerified, identity, requestLogin, notify, refreshProfile } = useApp();
+  const isStaff = dbUser?.role === 'admin' || dbUser?.role === 'subadmin';
+  const identityOk = isStaff || (emailVerified && identity?.status === 'approved');
+  const [planActive, setPlanActive] = useState(false);
+  const [blockers, setBlockers] = useState<string[]>([]);
   const [plans, setPlans] = useState<MerchantPlan[]>([]);
   const [merchant, setMerchant] = useState<Merchant | null>(null);
   const [activePlan, setActivePlan] = useState<MerchantPlan | null>(null);
@@ -151,6 +156,8 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
               touristEmail: string;
             }>;
             reviews: Array<{ review: ReviewItem; authorName: string; listingTitle: string }>;
+            planActive?: boolean;
+            blockers?: string[];
           }>('/api/merchant/dashboard'),
           apiFetch<{ subscriptions: MerchantSubscriptionRow[] }>('/api/merchant/subscriptions'),
           apiFetch<{ campaigns: MarketingCampaign[] }>('/api/merchant/campaigns'),
@@ -158,6 +165,8 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
         ]);
         setMerchant(dash.merchant);
         setActivePlan(dash.plan);
+        setPlanActive(Boolean(dash.planActive));
+        setBlockers(dash.blockers || []);
         setMyListings(dash.listings || []);
         setMyBookings(dash.bookings || []);
         setMyReviews(dash.reviews || []);
@@ -194,11 +203,11 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
   const handleOnboard = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!dbUser) {
-      await loginWithGoogle();
+      await requestLogin();
       return;
     }
     try {
-      await apiFetch('/api/merchant/onboard', {
+      const res = await apiFetch<{ verification?: { status: string; reason: string } }>('/api/merchant/onboard', {
         method: 'POST',
         body: JSON.stringify({
           companyName,
@@ -213,7 +222,15 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
           bio,
         }),
       });
-      notify('Cadastro empresarial enviado para verificação!', 'success');
+      const v = res.verification?.status;
+      notify(
+        v === 'verified'
+          ? 'Cadastro aprovado pela IA! Agora ative o plano e conecte o Mercado Pago.'
+          : v === 'rejected'
+          ? `Cadastro não aprovado: ${res.verification?.reason}`
+          : 'Cadastro enviado. A equipe vai conferir e você será avisado.',
+        v === 'rejected' ? 'error' : 'success'
+      );
       await refreshProfile();
       await loadPortal();
     } catch (err: unknown) {
@@ -241,7 +258,10 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
           amenities: ['Atendimento verificado Froc Rota'],
         }),
       });
-      notify('Serviço publicado no marketplace!', 'success');
+      notify(
+        blockers.length === 0 ? 'Anúncio enviado! A IA conferiu e ele já pode aparecer no site.' : 'Anúncio salvo. Ele aparece no site quando os passos acima estiverem completos.',
+        'success'
+      );
       setTitle('');
       setSummary('');
       setDescription('');
@@ -355,15 +375,33 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
         message: string;
       }>('/api/merchant/plans/subscribe', {
         method: 'POST',
-        body: JSON.stringify({ planSlug, autoRenew: true }),
+        body: JSON.stringify({ planSlug }),
       });
       notify(res.message, 'success');
       if (res.checkoutUrl) {
+        // Página do Mercado Pago para cadastrar o cartão (cobrança automática todo mês).
         window.open(res.checkoutUrl, '_blank', 'noopener,noreferrer');
       }
       await loadPortal();
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : 'Erro ao contratar plano.', 'error');
+    }
+  };
+
+  const handleCancelAutoRenew = async () => {
+    try {
+      const res = await apiFetch<{ cancelled: number; planExpiresAt: string | null }>('/api/merchant/plans/cancel', {
+        method: 'POST',
+      });
+      notify(
+        res.cancelled > 0
+          ? `Renovação automática desligada. Seu plano vale até ${res.planExpiresAt ? new Date(res.planExpiresAt).toLocaleDateString('pt-BR') : 'o fim do período pago'}.`
+          : 'Não havia cobrança automática ativa.',
+        'success'
+      );
+      await loadPortal();
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Erro ao cancelar.', 'error');
     }
   };
 
@@ -455,7 +493,7 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
       <div className="w-full max-w-6xl bg-[#FFFFFF] rounded-2xl border-2 border-[#111111] shadow-2xl overflow-hidden my-4 froc-animate-modal">
         <FuturisticModalHeader
           title="Painel do Anunciante & Central de Marketing"
-          subtitle="Anúncios, mídias, promoções, horários, planos (incl. R$ 100/30 dias), Marketing IA e Google Business OAuth"
+          subtitle="Anúncios, horários, planos com cobrança automática, split Mercado Pago e Marketing IA"
           icon={<Store className="w-5 h-5" />}
           onBack={onClose}
           onClose={onClose}
@@ -470,16 +508,25 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                 Conecte sua conta para anunciar na Froc Rota Turismo
               </h3>
               <p className="text-sm text-[#111111]/70 max-w-lg mx-auto">
-                Comece com o plano Anúncio Básico (30 dias) por R$ 100,00 ou escolha Gratuito,
-                Profissional e Premium com repasses verificados e campanhas com IA.
+                Planos a partir de R$ 100,00 por mês, com cobrança automática no cartão. Profissional e
+                Premium têm comissão menor e campanhas com IA.
               </p>
               <button
                 type="button"
-                onClick={loginWithGoogle}
+                onClick={requestLogin}
                 className="px-6 py-3 rounded-lg bg-[#111111] text-[#39FF14] text-sm font-semibold hover:bg-[#111111]/90"
               >
-                Entrar com Google para Começar
+                Entrar para Começar
               </button>
+            </div>
+          ) : !merchant && !identityOk ? (
+            <div className="max-w-xl mx-auto space-y-4 py-4">
+              <h3 className="text-xl font-semibold text-[#111111]">Antes de anunciar</h3>
+              <p className="text-sm text-[#111111]/75">
+                Todo parceiro da Froc Rota passa pela verificação anti-fraude: e-mail confirmado, CPF verdadeiro,
+                foto do documento e selfie. Depois a IA confere sua empresa e libera os anúncios.
+              </p>
+              <IdentityVerification purpose="para anunciar" />
             </div>
           ) : !merchant ? (
             <div className="space-y-8">
@@ -504,9 +551,7 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                         </span>
                       </div>
                       <div className="text-xl font-semibold text-[#111111] font-mono-tabular mt-2">
-                        {plan.monthlyPriceCents === 0
-                          ? 'Gratuito'
-                          : `${formatMoney(plan.monthlyPriceCents, currency)} / ${plan.durationDays || 30}d`}
+                        {`${formatMoney(plan.monthlyPriceCents, currency)} / mês`}
                       </div>
                       <ul className="mt-3 space-y-1 text-[11px] text-[#111111]/70">
                         {plan.benefitsJson.map((b) => (
@@ -611,8 +656,10 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                       Plano {activePlan?.name} ({((activePlan?.commissionBps ?? 1800) / 100).toFixed(0)}
                       % comissão) · Status:{' '}
                       {merchant.verificationStatus === 'verified'
-                        ? 'Verificado'
-                        : 'Em verificação documental'}
+                        ? 'Verificado pela IA'
+                        : merchant.verificationStatus === 'rejected'
+                        ? `Reprovado${merchant.verificationReason ? `: ${merchant.verificationReason}` : ''}`
+                        : 'Em análise pela equipe'}
                     </span>
                   </div>
                   <h3 className="text-2xl font-semibold text-[#111111] mt-1">
@@ -645,6 +692,46 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                   ))}
                 </div>
               </div>
+
+              {blockers.length > 0 && (
+                <div className="p-4 rounded-2xl border-2 border-[#111111] bg-[#FFD700]/10 space-y-3">
+                  <h4 className="text-sm font-extrabold text-[#111111]">Para seus anúncios aparecerem no site</h4>
+                  <ol className="space-y-2 text-xs text-[#111111]">
+                    <li className="flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        {merchant.verificationStatus === 'verified' ? '✅' : '⏳'} 1. Verificação do parceiro pela IA
+                        {merchant.verificationStatus !== 'verified' && merchant.verificationReason
+                          ? ` — ${merchant.verificationReason}`
+                          : ''}
+                      </span>
+                    </li>
+                    <li className="flex flex-wrap items-center justify-between gap-2">
+                      <span>{planActive ? '✅' : '⏳'} 2. Plano pago com cobrança automática no cartão</span>
+                      {!planActive && merchant.verificationStatus === 'verified' && (
+                        <button
+                          type="button"
+                          onClick={() => handleSubscribePlan(activePlan?.slug || 'basic')}
+                          className="min-h-[40px] px-3 rounded-lg bg-[#111111] text-[#39FF14] font-bold"
+                        >
+                          Ativar plano {activePlan?.name ?? ''}
+                        </button>
+                      )}
+                    </li>
+                    <li className="flex flex-wrap items-center justify-between gap-2">
+                      <span>{merchant.mpOauthConnected ? '✅' : '⏳'} 3. Conta Mercado Pago conectada (recebe as reservas com split automático)</span>
+                      {!merchant.mpOauthConnected && (
+                        <button
+                          type="button"
+                          onClick={() => startOAuthPopup('/api/oauth/mercadopago/url')}
+                          className="min-h-[40px] px-3 rounded-lg froc-btn-gold font-bold"
+                        >
+                          Conectar Mercado Pago
+                        </button>
+                      )}
+                    </li>
+                  </ol>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="p-4 rounded-xl bg-white border border-[#111111]/15">
@@ -963,9 +1050,7 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                           <div>
                             <div className="font-semibold text-sm text-[#111111]">{p.name}</div>
                             <div className="text-xl font-semibold font-mono-tabular mt-1">
-                              {p.monthlyPriceCents === 0
-                                ? 'Gratuito'
-                                : `${formatMoney(p.monthlyPriceCents, currency)} / ${p.durationDays || 30}d`}
+                              {`${formatMoney(p.monthlyPriceCents, currency)} / mês`}
                             </div>
                             <div className="text-[11px] text-[#111111]/70 mt-1">
                               Comissão: {(p.commissionBps / 100).toFixed(0)}% · Até {p.maxListings}{' '}
@@ -974,15 +1059,35 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                           </div>
                           <button
                             type="button"
-                            disabled={isCurrent}
+                            disabled={isCurrent && planActive}
                             onClick={() => handleSubscribePlan(p.slug)}
-                            className="w-full py-2 rounded-lg bg-[#111111] text-[#39FF14] text-xs font-semibold disabled:opacity-50"
+                            className="w-full min-h-[40px] py-2 rounded-lg bg-[#111111] text-[#39FF14] text-xs font-semibold disabled:opacity-50"
                           >
-                            {isCurrent ? 'Plano Atual' : 'Contratar Plano'}
+                            {isCurrent && planActive
+                              ? 'Plano Atual'
+                              : isCurrent
+                              ? 'Ativar com cartão'
+                              : 'Assinar com cartão'}
                           </button>
                         </div>
                       );
                     })}
+                  </div>
+
+                  <div className="p-3.5 rounded-xl border border-[#111111]/15 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <span>
+                      Cobrança automática mensal no cartão pelo Mercado Pago.{' '}
+                      {merchant.planExpiresAt
+                        ? `Plano pago até ${new Date(merchant.planExpiresAt).toLocaleDateString('pt-BR')}.`
+                        : 'Nenhuma cobrança aprovada ainda.'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCancelAutoRenew}
+                      className="min-h-[40px] px-3 rounded-lg border border-[#111111]/25 font-semibold"
+                    >
+                      Desligar renovação automática
+                    </button>
                   </div>
 
                   <div className="space-y-2">
@@ -1004,9 +1109,9 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                             </span>{' '}
                             · Status: <strong>{subscription.status}</strong>
                           </div>
-                          {subscription.status === 'pending_payment' && (
+                          {['pending_authorization', 'card_authorized', 'pending_payment'].includes(subscription.status) && (
                             <span className="px-3 py-1 rounded-lg bg-[#FFD700]/25 text-[#111111] font-semibold">
-                              Ativação automática após webhook do Mercado Pago
+                              Ativa na primeira cobrança aprovada do cartão
                             </span>
                           )}
                         </div>

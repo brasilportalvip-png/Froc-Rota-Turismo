@@ -819,7 +819,7 @@ export const READY_POPUP_MODELS: SeedPopupModel[] = [
     displayRule: 'engaged_scroll',
     validFrom: '2025-01-01',
     validUntil: '2028-12-31',
-    active: true,
+    active: false, // sem cupons de desconto (regra do dono)
   },
   {
     code: 'POP-040',
@@ -838,7 +838,7 @@ export const READY_POPUP_MODELS: SeedPopupModel[] = [
     displayRule: 'engaged_scroll',
     validFrom: '2025-01-01',
     validUntil: '2028-12-31',
-    active: true,
+    active: false, // sem cupons de desconto (regra do dono)
   },
   {
     code: 'POP-041',
@@ -857,7 +857,7 @@ export const READY_POPUP_MODELS: SeedPopupModel[] = [
     displayRule: 'engaged_scroll',
     validFrom: '2025-01-01',
     validUntil: '2028-12-31',
-    active: true,
+    active: false, // sem cupons de desconto (regra do dono)
   },
   {
     code: 'POP-042',
@@ -876,7 +876,7 @@ export const READY_POPUP_MODELS: SeedPopupModel[] = [
     displayRule: 'engaged_scroll',
     validFrom: '2025-01-01',
     validUntil: '2028-12-31',
-    active: true,
+    active: false, // sem cupons de desconto (regra do dono)
   },
 
   // 10. Anúncios patrocinados (POP-043 .. POP-046)

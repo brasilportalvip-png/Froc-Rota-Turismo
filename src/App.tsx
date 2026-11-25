@@ -57,7 +57,7 @@ function FrocRotaPlatform() {
     dbUser,
     isAnyAdmin,
     language,
-    loginWithGoogle,
+    requestLogin,
     notify,
     setCurrency,
     setLanguage,
@@ -287,11 +287,7 @@ function FrocRotaPlatform() {
         return;
       }
       if (targetAction.startsWith('coupon:')) {
-        const code = targetAction.replace('coupon:', '').trim();
-        if (navigator.clipboard?.writeText) {
-          navigator.clipboard.writeText(code).catch(() => {});
-        }
-        notify(`🎟️ Cupom ${code} copiado! Aplique no checkout da sua reserva.`, 'success');
+        // O site não oferece cupons de desconto: pop-up antigo só leva ao marketplace.
         document.getElementById('marketplace')?.scrollIntoView({ behavior: 'smooth' });
         return;
       }
@@ -301,14 +297,14 @@ function FrocRotaPlatform() {
         setShowMerchantPortal(true);
       } else if (targetAction === 'modal:account') {
         if (dbUser) setShowAccount(true);
-        else loginWithGoogle();
+        else requestLogin();
       } else if (targetAction === 'modal:chat') {
         setShowChat(true);
       } else if (targetAction === 'modal:pwa') {
         window.dispatchEvent(new CustomEvent('froc-open-pwa-guide'));
       }
     },
-    [dbUser, destinations, listings, loginWithGoogle, notify]
+    [dbUser, destinations, listings, requestLogin, notify]
   );
 
   return (
@@ -376,7 +372,7 @@ function FrocRotaPlatform() {
             ) : (
               <button
                 type="button"
-                onClick={loginWithGoogle}
+                onClick={requestLogin}
                 className="min-h-[42px] px-4 py-2 rounded-xl bg-[#111111] text-[#FFFFFF] border border-[#111111] text-xs font-bold hover:border-[#39FF14] hover:text-[#39FF14] transition-colors whitespace-nowrap shrink-0"
               >
                 {t.signIn}

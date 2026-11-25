@@ -35,8 +35,11 @@ export interface Merchant {
   cadasturNumber?: string | null;
   category: string;
   riskLevel: string;
-  verificationStatus: 'pending' | 'verified' | 'rejected';
+  verificationStatus: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  verificationReason?: string | null;
   planId: number;
+  planExpiresAt?: string | null;
+  planStatus?: string | null;
   city: string;
   state: string;
   phone: string;
@@ -138,7 +141,6 @@ export interface Booking {
   checkInDate: string;
   checkOutDate?: string | null;
   guestsCount: number;
-  couponCode?: string | null;
   grossAmountCents: number;
   discountCents: number;
   commissionCents: number;
@@ -406,4 +408,15 @@ export interface PopupTemplate {
   active: boolean;
   createdByEmail?: string;
   createdAt?: string;
+}
+
+export type IdentityStatus = 'none' | 'pending' | 'approved' | 'rejected' | 'manual_review';
+
+export interface IdentityPublic {
+  status: IdentityStatus;
+  reason: string | null;
+  cpfMasked: string | null;
+  hasDocumentImage: boolean;
+  hasSelfieImage: boolean;
+  decidedAt: string | null;
 }

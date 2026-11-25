@@ -1,10 +1,24 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, User as FirebaseUser } from 'firebase/auth';
 import {
-  auth,
-  googleAuthProvider,
-} from '../lib/firebase.ts';
-import { AppCurrency, AppLanguage, DbUser, Merchant } from '../types.ts';
+  onAuthStateChanged,
+  sendEmailVerification,
+  signOut,
+  User as FirebaseUser,
+} from 'firebase/auth';
+import { auth } from '../lib/firebase.ts';
+import { AppCurrency, AppLanguage, DbUser, IdentityPublic, Merchant } from '../types.ts';
+import { AuthModal } from '../components/AuthModal.tsx';
+
+/** Erro da API com o código do servidor (ex.: IDENTITY_REQUIRED) para a tela reagir certo. */
+export class ApiError extends Error {
+  code?: string;
+  status: number;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
 
 interface ToastMessage {
   id: number;
@@ -24,8 +38,14 @@ interface AppContextValue {
   currency: AppCurrency;
   setLanguage: (lang: AppLanguage) => void;
   setCurrency: (curr: AppCurrency) => void;
-  loginWithGoogle: () => Promise<void>;
+  /** Abre a janela de login (e-mail e senha ou Google). */
+  requestLogin: () => Promise<void>;
   logout: () => Promise<void>;
+  emailVerified: boolean;
+  identity: IdentityPublic | null;
+  resendVerificationEmail: () => Promise<void>;
+  /** Depois de clicar no link do e-mail: recarrega a conta e o token. */
+  recheckEmailVerified: () => Promise<boolean>;
   refreshProfile: () => Promise<void>;
   apiFetch: <T>(url: string, options?: RequestInit) => Promise<T>;
   notify: (text: string, type?: 'info' | 'success' | 'error') => void;
@@ -43,6 +63,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [language, setLanguageState] = useState<AppLanguage>('pt');
   const [currency, setCurrencyState] = useState<AppCurrency>('BRL');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [identity, setIdentity] = useState<IdentityPublic | null>(null);
 
   const notify = useCallback((text: string, type: 'info' | 'success' | 'error' = 'info') => {
     const id = Date.now() + Math.random();
@@ -62,10 +85,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           user: DbUser;
           merchant: Merchant | null;
           adminPermissions?: string[];
+          emailVerified?: boolean;
+          identity?: IdentityPublic;
         };
         setDbUser(data.user);
         setMerchant(data.merchant);
         setAdminPermissions(data.adminPermissions || []);
+        setEmailVerified(data.emailVerified ?? fbUser.emailVerified);
+        setIdentity(data.identity ?? null);
         if (data.user.preferredLang) setLanguageState(data.user.preferredLang);
         if (data.user.preferredCurrency) setCurrencyState(data.user.preferredCurrency);
 
@@ -97,6 +124,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setDbUser(null);
         setMerchant(null);
         setAdminPermissions([]);
+        setEmailVerified(false);
+        setIdentity(null);
       }
       setAuthLoading(false);
     });
@@ -120,24 +149,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const res = await fetch(url, { ...options, headers });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error((data as { error?: string }).error || `Erro HTTP ${res.status}`);
+        const d = data as { error?: string; code?: string };
+        throw new ApiError(d.error || `Erro HTTP ${res.status}`, res.status, d.code);
       }
       return data as T;
     },
     [firebaseUser, idToken]
   );
 
-  const loginWithGoogle = useCallback(async () => {
-    try {
-      const cred = await signInWithPopup(auth, googleAuthProvider);
-      const token = await cred.user.getIdToken();
+  const requestLogin = useCallback(async () => {
+    setAuthModalOpen(true);
+  }, []);
+
+  const handleAuthenticated = useCallback(
+    async (user: FirebaseUser, message: string) => {
+      setAuthModalOpen(false);
+      const token = await user.getIdToken(true);
       setIdToken(token);
-      await syncProfile(token, cred.user);
-      notify('Sessão iniciada com segurança.', 'success');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Não foi possível entrar.';
-      notify(msg, 'error');
+      await syncProfile(token, user);
+      notify(message, 'success');
+    },
+    [notify, syncProfile]
+  );
+
+  const resendVerificationEmail = useCallback(async () => {
+    const u = auth.currentUser;
+    if (!u) return;
+    try {
+      await sendEmailVerification(u);
+      notify(`Enviamos um novo link para ${u.email}. Veja também a caixa de spam.`, 'success');
+    } catch {
+      notify('Aguarde alguns minutos antes de pedir outro e-mail.', 'error');
     }
+  }, [notify]);
+
+  const recheckEmailVerified = useCallback(async () => {
+    const u = auth.currentUser;
+    if (!u) return false;
+    await u.reload();
+    const fresh = auth.currentUser ?? u;
+    // o token precisa ser renovado para o servidor enxergar o e-mail confirmado
+    const token = await fresh.getIdToken(true);
+    setIdToken(token);
+    await syncProfile(token, fresh);
+    if (!fresh.emailVerified) notify('Ainda não confirmado. Clique no link que enviamos por e-mail.', 'info');
+    return fresh.emailVerified;
   }, [notify, syncProfile]);
 
   const logout = useCallback(async () => {
@@ -146,6 +202,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDbUser(null);
     setMerchant(null);
     setAdminPermissions([]);
+    setEmailVerified(false);
+    setIdentity(null);
     notify('Você saiu da sua conta.', 'info');
   }, [notify]);
 
@@ -206,14 +264,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         currency,
         setLanguage,
         setCurrency,
-        loginWithGoogle,
+        requestLogin,
         logout,
+        emailVerified,
+        identity,
+        resendVerificationEmail,
+        recheckEmailVerified,
         refreshProfile,
         apiFetch,
         notify,
       }}
     >
       {children}
+      {authModalOpen && (
+        <AuthModal onClose={() => setAuthModalOpen(false)} onAuthenticated={handleAuthenticated} />
+      )}
       {toasts.length > 0 && (
         <div className="fixed bottom-4 right-4 z-[96] flex flex-col gap-2 max-w-sm">
           {toasts.map((t) => (

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { adminAuth, adminDb } from './_lib/firebase-admin.js';
+import { agentVerifyMerchant } from './_lib/agent-jobs.js';
 import { dispatchAgentTask, ensure200AgentsSeeded } from './_lib/agents.js';
 import { recordAuditLog } from './_lib/audit.js';
 import { requireAdminContext } from './_lib/auth.js';
@@ -21,6 +22,8 @@ import {
   sanitizeAssetOrSafeHttpUrl,
   sendJson,
 } from './_lib/http.js';
+import { publicIdentityStatus, IdentityCheckDoc } from './_lib/identity.js';
+import { refreshMerchantListingsVisibility } from './_lib/merchant-status.js';
 import { getGoogleBusinessOAuthConfig, getMercadoPagoOAuthConfig } from './_lib/oauth.js';
 import { getPaymentGatewayStatus } from './_lib/payment.js';
 import { POPUP_CATEGORIES } from './_lib/popups.js';
@@ -63,7 +66,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         allDestinations,
         allListings,
         allBookings,
-        allCoupons,
         allConcierge,
         allReports,
         recentAudit,
@@ -77,7 +79,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         getAllDocs<Record<string, unknown>>('destinations'),
         getAllDocs<Record<string, unknown>>('listings'),
         getAllDocs<Record<string, unknown>>('bookings'),
-        getAllDocs<Record<string, unknown>>('coupons'),
         getAllDocs<Record<string, unknown>>('concierge_requests'),
         getAllDocs<Record<string, unknown>>('reports'),
         getAllDocs<Record<string, unknown>>('audit_logs'),
@@ -92,7 +93,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       allDestinations.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
       allListings.sort(byCreatedDesc);
       allBookings.sort(byCreatedDesc);
-      allCoupons.sort(byCreatedDesc);
       allConcierge.sort(byCreatedDesc);
       allReports.sort(byCreatedDesc);
       recentAudit.sort(byCreatedDesc);
@@ -135,7 +135,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         destinations: allDestinations,
         listings: allListings,
         bookings: allBookings.slice(0, 50),
-        coupons: allCoupons,
         conciergeRequests: allConcierge,
         reports: allReports,
         auditLogs: recentAudit.slice(0, 40),
@@ -161,17 +160,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const ctx = await requireAdminContext(req, res, 'merchants');
     if (!ctx) return;
     try {
-      const [merchants, coupons, listings] = await Promise.all([
+      const [merchants, listings] = await Promise.all([
         getAllDocs<Record<string, unknown>>('merchants'),
-        getAllDocs<Record<string, unknown>>('coupons'),
         getAllDocs<Record<string, unknown>>('listings'),
       ]);
       merchants.sort(byCreatedDesc);
-      coupons.sort(byCreatedDesc);
       listings.sort(byCreatedDesc);
-      sendJson(res, 200, { merchants, coupons, listings });
+      sendJson(res, 200, { merchants, listings });
     } catch {
-      sendJson(res, 500, { error: 'Erro ao carregar parceiros e cupons.' });
+      sendJson(res, 500, { error: 'Erro ao carregar parceiros.' });
     }
     return;
   }
@@ -184,8 +181,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
     try {
       const merchantId = Number(verifyMatch[1]);
-      const body = await parseJsonBody<{ status?: string }>(req);
-      if (!['verified', 'rejected', 'pending'].includes(String(body.status))) {
+      const body = await parseJsonBody<{ status?: string; reason?: string }>(req);
+      if (String(body.status) === 'ai') {
+        // Pede para a IA verificar de novo (ex.: depois que o parceiro corrigiu dados).
+        const r = await agentVerifyMerchant(merchantId);
+        sendJson(res, 200, { verification: r });
+        return;
+      }
+      if (!['verified', 'rejected', 'pending', 'manual_review'].includes(String(body.status))) {
         sendJson(res, 400, { error: 'Status inválido.' });
         return;
       }
@@ -196,20 +199,26 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         sendJson(res, 404, { error: 'Fornecedor não encontrado.' });
         return;
       }
-      await mRef.update({ verificationStatus: body.status });
-
-      if (body.status === 'verified') {
+      await mRef.update({
+        verificationStatus: body.status,
+        verificationReason: typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim().slice(0, 300) : null,
+        verifiedBy: ctx.dbUser.email,
+        verifiedAt: new Date().toISOString(),
+      });
+      // Anúncios entram/saem do ar conforme verificação + plano + Mercado Pago.
+      const visibility = await refreshMerchantListingsVisibility(merchantId);
+      if (body.status === 'verified' && !mSnap.data()?.userUid) {
+        // Parceiro de exemplo (sem conta): mantém a regra antiga de liberar os pendentes.
         const pendingListings = await adminDb
           .collection('listings')
           .where('merchantId', '==', merchantId)
           .where('status', '==', 'pending')
           .get();
         const batch = adminDb.batch();
-        for (const docSnap of pendingListings.docs) {
-          batch.update(docSnap.ref, { status: 'active' });
-        }
+        for (const docSnap of pendingListings.docs) batch.update(docSnap.ref, { status: 'active' });
         if (!pendingListings.empty) await batch.commit();
       }
+      void visibility;
 
       await recordAuditLog({
         actorUserId: ctx.dbUser.id,
@@ -228,46 +237,232 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return;
   }
 
-  // POST /api/admin/coupons
-  if (req.method === 'POST' && route === '/admin/coupons') {
-    const ctx = await requireAdminContext(req, res, 'merchants');
+
+  // ========================
+  // VERIFICAÇÃO DE IDENTIDADE (fila de revisão humana)
+  // ========================
+  if (req.method === 'GET' && route === '/admin/identity') {
+    const ctx = await requireAdminContext(req, res, 'security');
     if (!ctx) return;
-
     try {
-      const body = await parseJsonBody<{
-        code?: string;
-        discountPercent?: number;
-        maxUses?: number;
-      }>(req);
-      const cleanCode = String(body.code ?? '').trim().toUpperCase();
-      if (!cleanCode) {
-        sendJson(res, 400, { error: 'Código obrigatório.' });
-        return;
-      }
-      const id = await nextSeqId('coupons');
-      const coupon = {
-        id,
-        code: cleanCode,
-        discountPercent: Math.max(1, Math.min(70, Number(body.discountPercent) || 10)),
-        usedCount: 0,
-        maxUses: Math.max(1, Number(body.maxUses) || 100),
-        active: true,
-        createdAt: new Date().toISOString(),
-      };
-      await adminDb.collection('coupons').doc(cleanCode).set(coupon);
+      const status = query.status || 'manual_review';
+      const snap =
+        status === 'all'
+          ? await adminDb.collection('identity_checks').get()
+          : await adminDb.collection('identity_checks').where('status', '==', status).get();
+      const items = snap.docs
+        .map((d) => d.data() as IdentityCheckDoc)
+        .sort((a, b) => String(b.submittedAt || b.updatedAt).localeCompare(String(a.submittedAt || a.updatedAt)))
+        .slice(0, 100)
+        .map((c) => ({
+          uid: c.uid,
+          email: c.email,
+          fullName: c.fullName,
+          cpfMasked: c.cpfMasked,
+          birthDate: c.birthDate,
+          status: c.status,
+          reason: c.reason,
+          aiResult: c.aiResult,
+          submittedAt: c.submittedAt,
+          decidedAt: c.decidedAt,
+          reviewedByEmail: c.reviewedByEmail,
+        }));
+      sendJson(res, 200, { items });
+    } catch (error) {
+      console.error('GET /api/admin/identity error:', error);
+      sendJson(res, 500, { error: 'Erro ao carregar verificações.' });
+    }
+    return;
+  }
 
+  // Fotos só aparecem para quem tem permissão de segurança, uma pessoa por vez (com registro de auditoria).
+  const identityImagesMatch = route.match(/^\/admin\/identity\/([A-Za-z0-9_-]{6,128})\/images$/);
+  if (req.method === 'GET' && identityImagesMatch) {
+    const ctx = await requireAdminContext(req, res, 'security');
+    if (!ctx) return;
+    try {
+      const uid = identityImagesMatch[1];
+      const [d, s] = await Promise.all([
+        adminDb.collection('kyc_images').doc(`${uid}_document`).get(),
+        adminDb.collection('kyc_images').doc(`${uid}_selfie`).get(),
+      ]);
+      const toUrl = (snap: { exists: boolean; data: () => Record<string, unknown> | undefined }) =>
+        snap.exists ? `data:${snap.data()?.mimeType};base64,${snap.data()?.data}` : null;
       await recordAuditLog({
         actorUserId: ctx.dbUser.id,
         actorEmail: ctx.dbUser.email,
-        action: 'ADMIN_COUPON_CREATED',
-        entityType: 'coupon',
-        entityId: cleanCode,
+        action: 'ADMIN_IDENTITY_IMAGES_VIEWED',
+        entityType: 'identity_check',
+        entityId: uid,
       });
-
-      sendJson(res, 201, { coupon });
+      sendJson(res, 200, { document: toUrl(d), selfie: toUrl(s) });
     } catch (error) {
-      console.error('Admin coupon error:', error);
-      sendJson(res, 500, { error: 'Erro ao criar cupom.' });
+      console.error('GET identity images error:', error);
+      sendJson(res, 500, { error: 'Erro ao carregar as fotos.' });
+    }
+    return;
+  }
+
+  const identityDecisionMatch = route.match(/^\/admin\/identity\/([A-Za-z0-9_-]{6,128})$/);
+  if (req.method === 'PATCH' && identityDecisionMatch) {
+    const ctx = await requireAdminContext(req, res, 'security');
+    if (!ctx) return;
+    try {
+      const uid = identityDecisionMatch[1];
+      const body = await parseJsonBody<{ decision?: string; reason?: string }>(req);
+      const decision = String(body.decision);
+      if (!['approved', 'rejected', 'release_cpf'].includes(decision)) {
+        sendJson(res, 400, { error: 'Decisão inválida.' });
+        return;
+      }
+      const ref = adminDb.collection('identity_checks').doc(uid);
+      const snap = await ref.get();
+      if (!snap.exists) {
+        sendJson(res, 404, { error: 'Verificação não encontrada.' });
+        return;
+      }
+      const check = snap.data() as IdentityCheckDoc;
+      const nowIso = new Date().toISOString();
+      if (decision === 'release_cpf') {
+        // Libera o CPF preso a esta conta (ex.: o dono verdadeiro do CPF pediu ao suporte).
+        if (check.cpfHash) {
+          const idx = await adminDb.collection('cpf_index').doc(check.cpfHash).get();
+          if (idx.exists && idx.data()?.uid === uid) await idx.ref.delete();
+        }
+        await ref.set({ status: 'rejected', reason: 'CPF liberado pela equipe.', decidedAt: nowIso, reviewedByEmail: ctx.dbUser.email }, { merge: true });
+      } else {
+        if (decision === 'approved' && check.cpfHash) {
+          // Garante que o CPF não esteja em outra conta antes de aprovar.
+          const idxRef = adminDb.collection('cpf_index').doc(check.cpfHash);
+          const idx = await idxRef.get();
+          if (idx.exists && idx.data()?.uid !== uid) {
+            sendJson(res, 409, { error: 'Este CPF já pertence a outra conta.' });
+            return;
+          }
+          if (!idx.exists) await idxRef.set({ uid, createdAt: nowIso });
+        }
+        if (decision === 'rejected' && check.cpfHash) {
+          const idx = await adminDb.collection('cpf_index').doc(check.cpfHash).get();
+          if (idx.exists && idx.data()?.uid === uid) await idx.ref.delete();
+        }
+        await ref.set(
+          {
+            status: decision,
+            reason:
+              decision === 'approved'
+                ? 'Aprovado pela equipe.'
+                : String(body.reason || 'Documento ou foto não conferem.').slice(0, 300),
+            decidedAt: nowIso,
+            updatedAt: nowIso,
+            reviewedByEmail: ctx.dbUser.email,
+          },
+          { merge: true }
+        );
+      }
+      const notifId = await nextSeqId('notifications');
+      await adminDb.collection('notifications').doc(String(notifId)).set({
+        id: notifId,
+        userId: uid,
+        numericUserId: check.userId ?? null,
+        title: decision === 'approved' ? 'Identidade aprovada' : 'Verificação de identidade não aprovada',
+        body:
+          decision === 'approved'
+            ? 'Pronto! Você já pode reservar e anunciar na Froc Rota.'
+            : 'Envie novamente a foto do documento e a selfie em Minha Conta.',
+        kind: 'security',
+        category: 'security',
+        read: false,
+        createdAt: nowIso,
+      });
+      await recordAuditLog({
+        actorUserId: ctx.dbUser.id,
+        actorEmail: ctx.dbUser.email,
+        action: 'ADMIN_IDENTITY_DECISION',
+        entityType: 'identity_check',
+        entityId: uid,
+        details: { decision },
+      });
+      // Se for parceiro, a IA reavalia o cadastro comercial com a identidade nova.
+      if (decision === 'approved') {
+        const m = await adminDb.collection('merchants').where('userUid', '==', uid).limit(1).get();
+        if (!m.empty) await agentVerifyMerchant(Number(m.docs[0].data().id));
+      }
+      sendJson(res, 200, { identity: publicIdentityStatus((await ref.get()).data() as IdentityCheckDoc) });
+    } catch (error) {
+      console.error('PATCH /api/admin/identity error:', error);
+      sendJson(res, 500, { error: 'Erro ao registrar a decisão.' });
+    }
+    return;
+  }
+
+  // GET /api/admin/reviews/hidden — avaliações ocultadas pela IA; PATCH restaura
+  if (req.method === 'GET' && route === '/admin/reviews/hidden') {
+    const ctx = await requireAdminContext(req, res, 'merchants');
+    if (!ctx) return;
+    try {
+      const snap = await adminDb.collection('reviews').where('hidden', '==', true).get();
+      const reviews = snap.docs.map((d) => d.data()).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      sendJson(res, 200, { reviews: reviews.slice(0, 100) });
+    } catch (error) {
+      console.error('GET hidden reviews error:', error);
+      sendJson(res, 500, { error: 'Erro ao carregar avaliações.' });
+    }
+    return;
+  }
+  const reviewVisMatch = route.match(/^\/admin\/reviews\/(\d+)$/);
+  if (req.method === 'PATCH' && reviewVisMatch) {
+    const ctx = await requireAdminContext(req, res, 'merchants');
+    if (!ctx) return;
+    try {
+      const body = await parseJsonBody<{ hidden?: boolean }>(req);
+      const ref = adminDb.collection('reviews').doc(reviewVisMatch[1]);
+      if (!(await ref.get()).exists) {
+        sendJson(res, 404, { error: 'Avaliação não encontrada.' });
+        return;
+      }
+      await ref.set({ hidden: body.hidden === true, hiddenBy: body.hidden === true ? ctx.dbUser.email : null }, { merge: true });
+      await recordAuditLog({
+        actorUserId: ctx.dbUser.id,
+        actorEmail: ctx.dbUser.email,
+        action: 'ADMIN_REVIEW_VISIBILITY',
+        entityType: 'review',
+        entityId: reviewVisMatch[1],
+        details: { hidden: body.hidden === true },
+      });
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      console.error('PATCH review error:', error);
+      sendJson(res, 500, { error: 'Erro ao atualizar avaliação.' });
+    }
+    return;
+  }
+
+  // GET /api/admin/agent-reports — relatórios diários escritos pelos agentes
+  if (req.method === 'GET' && route === '/admin/agent-reports') {
+    const ctx = await requireAdminContext(req, res, 'agents');
+    if (!ctx) return;
+    try {
+      const reports = await getAllDocs<Record<string, unknown>>('agent_reports');
+      reports.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      sendJson(res, 200, { reports: reports.slice(0, 30) });
+    } catch (error) {
+      console.error('GET /api/admin/agent-reports error:', error);
+      sendJson(res, 500, { error: 'Erro ao carregar relatórios.' });
+    }
+    return;
+  }
+
+  // POST /api/admin/agents/run-daily — roda agora a rotina diária dos agentes (a mesma do cron)
+  if (req.method === 'POST' && route === '/admin/agents/run-daily') {
+    const ctx = await requireAdminContext(req, res, 'agents');
+    if (!ctx) return;
+    try {
+      const { runDailyAgentRoutine } = await import('./_lib/agent-jobs.js');
+      const result = await runDailyAgentRoutine();
+      sendJson(res, 200, { result });
+    } catch (error) {
+      console.error('POST /api/admin/agents/run-daily error:', error);
+      sendJson(res, 500, { error: 'Erro ao rodar a rotina dos agentes.' });
     }
     return;
   }

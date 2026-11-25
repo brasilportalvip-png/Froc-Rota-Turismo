@@ -4,6 +4,8 @@ import { dispatchAgentTask } from './_lib/agents.js';
 import { recordAuditLog } from './_lib/audit.js';
 import { authenticateRequest } from './_lib/auth.js';
 import { nextSeqId } from './_lib/firestore-helpers.js';
+import { isIdentityApproved } from './_lib/identity.js';
+import { getSellerAccessToken } from './_lib/mp-marketplace.js';
 import {
   ApiRequest,
   ApiResponse,
@@ -119,7 +121,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         checkInDate?: string;
         checkOutDate?: string | null;
         guestsCount?: number;
-        couponCode?: string | null;
         paymentMethod?: string;
         guestNotes?: string;
       }>(req);
@@ -130,13 +131,40 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         checkInDate,
         checkOutDate,
         guestsCount = 1,
-        couponCode,
         paymentMethod = 'pix',
         guestNotes,
       } = body;
 
       if (!listingId || !checkInDate) {
         sendJson(res, 400, { error: 'listingId e data de check-in são obrigatórios.' });
+        return;
+      }
+
+      // Split obrigatório: o parceiro precisa ter a conta Mercado Pago conectada.
+      const listingPre = await adminDb.collection('listings').doc(String(Number(listingId))).get();
+      const preMerchantId = listingPre.exists ? Number(listingPre.data()?.merchantId) : NaN;
+      const sellerAccessToken = Number.isFinite(preMerchantId) ? await getSellerAccessToken(preMerchantId) : null;
+      if (!sellerAccessToken) {
+        sendJson(res, 409, {
+          error: 'Este parceiro ainda não ativou o recebimento pelo Mercado Pago. Tente outra oferta.',
+          code: 'SELLER_NOT_CONNECTED',
+        });
+        return;
+      }
+
+      // Anti-fraude: só reserva quem confirmou o e-mail e teve CPF + fotos aprovados.
+      if (auth.authUser.email_verified !== true) {
+        sendJson(res, 403, {
+          error: 'Confirme seu e-mail antes de reservar (enviamos um link para sua caixa de entrada).',
+          code: 'EMAIL_NOT_VERIFIED',
+        });
+        return;
+      }
+      if (!(await isIdentityApproved(user.uid, user.role))) {
+        sendJson(res, 403, {
+          error: 'Para reservar, conclua a verificação de identidade (CPF + foto do documento + selfie) em Minha Conta.',
+          code: 'IDENTITY_REQUIRED',
+        });
         return;
       }
 
@@ -159,7 +187,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           capacity: number;
           status: string;
         };
-        if (listing.status !== 'active') {
+        if (listing.status !== 'active' || listing.merchantId !== preMerchantId) {
           throw new Error('LISTING_UNAVAILABLE');
         }
         if (guests > listing.capacity) {
@@ -211,32 +239,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         }
 
         const grossAmountCents = unitPriceCents * units;
-        let discountPercent = 0;
-        let appliedCouponCode: string | null = null;
-
-        if (typeof couponCode === 'string' && couponCode.trim()) {
-          const normalized = couponCode.trim().toUpperCase();
-          const couponRef = adminDb.collection('coupons').doc(normalized);
-          const couponSnap = await tx.get(couponRef);
-          if (couponSnap.exists) {
-            const c = couponSnap.data() as {
-              code: string;
-              discountPercent: number;
-              usedCount: number;
-              maxUses: number;
-              active: boolean;
-            };
-            if (c.active && c.usedCount < c.maxUses) {
-              discountPercent = c.discountPercent;
-              appliedCouponCode = c.code;
-              tx.update(couponRef, { usedCount: c.usedCount + 1 });
-            }
-          }
-        }
-
         const split = calculateCommissionSplit({
           grossAmountCents,
-          discountPercent,
+          discountPercent: 0, // o site não oferece cupons de desconto
           commissionBps: plan.commissionBps,
         });
 
@@ -256,7 +261,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           checkInDate: String(checkInDate),
           checkOutDate: checkOutDate ? String(checkOutDate) : null,
           guestsCount: guests,
-          couponCode: appliedCouponCode,
+          splitMode: 'mercadopago_marketplace',
           grossAmountCents: split.netChargedCents,
           discountCents: split.discountCents,
           commissionCents: split.commissionCents,
@@ -290,20 +295,21 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         return { booking: bookingRecord, listing };
       });
 
+      // Split automático: a cobrança sai na conta do parceiro e a comissão (marketplace_fee) vem para a Froc.
       let checkoutUrl: string | null = null;
-      if (process.env.MERCADOPAGO_ACCESS_TOKEN) {
-        try {
-          const pref = await createMercadoPagoPreference({
-            bookingCode: result.booking.bookingCode,
-            title: result.listing.title,
-            amountCents: result.booking.grossAmountCents,
-            payerEmail: user.email,
-            appUrl: getAppBaseUrl(),
-          });
-          if (pref) checkoutUrl = pref.init_point;
-        } catch (mpErr) {
-          console.error('Mercado Pago preference failed:', mpErr);
-        }
+      try {
+        const pref = await createMercadoPagoPreference({
+          bookingCode: result.booking.bookingCode,
+          title: result.listing.title,
+          amountCents: result.booking.grossAmountCents,
+          marketplaceFeeCents: result.booking.commissionCents,
+          sellerAccessToken,
+          payerEmail: user.email,
+          appUrl: getAppBaseUrl(),
+        });
+        if (pref) checkoutUrl = pref.init_point;
+      } catch (mpErr) {
+        console.error('Mercado Pago preference failed:', mpErr);
       }
 
       await recordAuditLog({

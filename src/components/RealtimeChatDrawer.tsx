@@ -25,7 +25,7 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
   defaultChannel = 'tourist',
   initialSubject = '',
 }) => {
-  const { apiFetch, dbUser, firebaseUser, isAnyAdmin, loginWithGoogle, notify } =
+  const { apiFetch, dbUser, firebaseUser, isAnyAdmin, requestLogin, notify } =
     useApp();
 
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
@@ -199,7 +199,7 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
   const handleCreateConversation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!dbUser) {
-      await loginWithGoogle();
+      await requestLogin();
       return;
     }
     const subject = newSubject.trim() || 'Atendimento Froc Rota Turismo';
@@ -291,10 +291,10 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
             </p>
             <button
               type="button"
-              onClick={loginWithGoogle}
+              onClick={requestLogin}
               className="min-h-[44px] px-5 py-2.5 rounded-xl froc-btn-neon text-xs font-extrabold"
             >
-              Entrar com Google
+              Entrar na conta
             </button>
           </div>
         ) : (

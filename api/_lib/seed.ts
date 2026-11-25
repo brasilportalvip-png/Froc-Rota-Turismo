@@ -27,6 +27,47 @@ async function ensureCounterAtLeast(counterName: string, minVal: number) {
 }
 
 async function runSeedAll() {
+  await runBaseSeed();
+  await migrateBusinessRulesV2();
+}
+
+/**
+ * Regras do dono (nov/2026): sem plano gratuito, sem cupons de desconto.
+ * Roda uma vez em bancos já existentes; não apaga histórico, só desativa.
+ */
+async function migrateBusinessRulesV2() {
+  const markerRef = adminDb.collection('_meta').doc('business_rules_v2');
+  const markerSnap = await markerRef.get();
+  if (markerSnap.exists && markerSnap.data()?.completed === true) return;
+
+  const [freePlans, coupons, couponPopups] = await Promise.all([
+    adminDb.collection('merchant_plans').where('slug', '==', 'free').get(),
+    adminDb.collection('coupons').get(),
+    adminDb.collection('popup_templates').where('category', '==', 'Cupons').get(),
+  ]);
+  const now = new Date().toISOString();
+  const batch = adminDb.batch();
+  for (const d of freePlans.docs) batch.set(d.ref, { active: false, updatedAt: now }, { merge: true });
+  for (const d of coupons.docs) batch.set(d.ref, { active: false, updatedAt: now }, { merge: true });
+  for (const d of couponPopups.docs) batch.set(d.ref, { active: false }, { merge: true });
+  const basic = await adminDb.collection('merchant_plans').where('slug', '==', 'basic').limit(1).get();
+  for (const d of basic.docs) {
+    const benefits = (d.data().benefitsJson as string[] | undefined) ?? [];
+    batch.set(
+      d.ref,
+      {
+        benefitsJson: benefits.map((b) =>
+          b === 'Renovação automática ou sob demanda' ? 'Cobrança automática mensal no cartão' : b
+        ),
+      },
+      { merge: true }
+    );
+  }
+  batch.set(markerRef, { completed: true, migratedAt: now }, { merge: true });
+  await batch.commit();
+}
+
+async function runBaseSeed() {
   const markerRef = adminDb.collection('_meta').doc('seed_v1');
   const markerSnap = await markerRef.get();
   if (markerSnap.exists && markerSnap.data()?.completed === true) {
@@ -67,7 +108,8 @@ async function seedPlans() {
         'Recebimento seguro via plataforma',
         'Página comercial verificada',
       ],
-      active: true,
+      // Regra do dono: o site não oferece plano gratuito.
+      active: false,
     },
     {
       id: 2,
@@ -82,7 +124,7 @@ async function seedPlans() {
         'Publicação ativa por 30 dias',
         'Galeria de fotografias autorizadas',
         'Dados de contato direto e mapa',
-        'Renovação automática ou sob demanda',
+        'Cobrança automática mensal no cartão',
       ],
       active: true,
     },
@@ -776,18 +818,6 @@ async function seedCoreCatalog() {
     }
   }
 
-  // Welcome Coupon
-  batch.set(adminDb.collection('coupons').doc('FROC10'), {
-    id: 1,
-    code: 'FROC10',
-    discountPercent: 10,
-    maxUses: 500,
-    usedCount: 0,
-    active: true,
-    expiresAt: '2027-12-31',
-    createdAt: now,
-  });
-
   // Initial Verified Reviews
   batch.set(adminDb.collection('reviews').doc('1'), {
     id: 1,
@@ -820,7 +850,6 @@ async function seedCoreCatalog() {
     ensureCounterAtLeast('destinations', seededDests.length),
     ensureCounterAtLeast('listings', seededListings.length),
     ensureCounterAtLeast('availability_slots', slotSeq - 1),
-    ensureCounterAtLeast('coupons', 1),
     ensureCounterAtLeast('reviews', 2),
   ]);
 }

@@ -19,7 +19,7 @@ export const DestinationDetailModal: React.FC<DestinationDetailModalProps> = ({
   onSelectListing,
   onOpenAiForDestination,
 }) => {
-  const { apiFetch, currency, dbUser, loginWithGoogle, notify } = useApp();
+  const { apiFetch, currency, dbUser, requestLogin, notify } = useApp();
   const [relatedListings, setRelatedListings] = useState<Listing[]>([]);
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,7 +49,7 @@ export const DestinationDetailModal: React.FC<DestinationDetailModalProps> = ({
 
   const handleFavorite = async () => {
     if (!dbUser) {
-      await loginWithGoogle();
+      await requestLogin();
       return;
     }
     try {
@@ -67,7 +67,7 @@ export const DestinationDetailModal: React.FC<DestinationDetailModalProps> = ({
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!dbUser) {
-      await loginWithGoogle();
+      await requestLogin();
       return;
     }
     if (!comment.trim()) return;

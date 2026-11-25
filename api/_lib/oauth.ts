@@ -2,10 +2,21 @@ import crypto from 'node:crypto';
 import { adminDb } from './firebase-admin.js';
 import { nextSeqId } from './firestore-helpers.js';
 
-const FALLBACK_STATE_SECRET = crypto.randomBytes(32).toString('hex');
-
+/**
+ * Na Vercel cada chamada pode cair numa instância diferente: um segredo aleatório por instância
+ * fazia o retorno do OAuth falhar. Sem OAUTH_STATE_SECRET, deriva um segredo estável dos
+ * segredos que já existem no servidor.
+ */
 function getStateSecret(): string {
-  return process.env.OAUTH_STATE_SECRET || FALLBACK_STATE_SECRET;
+  if (process.env.OAUTH_STATE_SECRET) return process.env.OAUTH_STATE_SECRET;
+  const base = [
+    process.env.MERCADOPAGO_CLIENT_SECRET,
+    process.env.MERCADOPAGO_WEBHOOK_SECRET,
+    process.env.FIREBASE_SERVICE_ACCOUNT_KEY,
+  ]
+    .filter(Boolean)
+    .join('|');
+  return crypto.createHash('sha256').update(`froc-oauth-state-v1|${base}`).digest('hex');
 }
 
 export function getAppBaseUrl(): string {

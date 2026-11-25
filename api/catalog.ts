@@ -170,7 +170,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         });
 
       const destReviews = reviewsSnap.docs
-        .map((d) => d.data() as ReviewDoc)
+        .map((d) => d.data() as ReviewDoc & { hidden?: boolean })
+        .filter((r) => r.hidden !== true) // ocultadas pela moderação da IA
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
         .map((r) => ({
           id: r.id,
@@ -300,7 +301,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
       const itemReviews = reviewsSnap.docs
-        .map((d) => d.data() as ReviewDoc)
+        .map((d) => d.data() as ReviewDoc & { hidden?: boolean })
+        .filter((r) => r.hidden !== true) // ocultadas pela moderação da IA
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
         .map((r) => ({
           id: r.id,
@@ -359,38 +361,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } catch (error) {
       console.error('GET /api/posts error:', error);
       sendJson(res, 500, { error: 'Erro ao carregar publicações diárias.' });
-    }
-    return;
-  }
-
-  // POST /api/coupons/validate
-  if (req.method === 'POST' && route === '/coupons/validate') {
-    if (!checkRateLimit(req, res, 'coupons:validate', 25, 60000)) return;
-    try {
-      const body = await parseJsonBody<{ code?: string }>(req);
-      const code = String(body.code ?? '').trim().toUpperCase();
-      if (!code) {
-        sendJson(res, 400, { error: 'Código de cupom obrigatório.' });
-        return;
-      }
-      const couponSnap = await adminDb.collection('coupons').doc(code).get();
-      if (!couponSnap.exists) {
-        sendJson(res, 404, { error: 'Cupom inválido ou esgotado.' });
-        return;
-      }
-      const coupon = couponSnap.data() as {
-        active: boolean;
-        usedCount: number;
-        maxUses: number;
-      };
-      if (!coupon.active || coupon.usedCount >= coupon.maxUses) {
-        sendJson(res, 404, { error: 'Cupom inválido ou esgotado.' });
-        return;
-      }
-      sendJson(res, 200, { valid: true, coupon });
-    } catch (error) {
-      console.error('POST /api/coupons/validate error:', error);
-      sendJson(res, 500, { error: 'Erro ao validar cupom.' });
     }
     return;
   }
