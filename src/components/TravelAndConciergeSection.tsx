@@ -35,7 +35,21 @@ export const TravelAndConciergeSection: React.FC = () => {
     connected: boolean;
     provider?: string;
     message?: string;
-    offers: Array<{ id?: string; price?: { total?: string; currency?: string } }>;
+    mode?: 'test' | 'live' | null;
+    offers: Array<{
+      id?: string;
+      price?: { total?: string; currency?: string };
+      airline?: string;
+      departureAt?: string;
+      arrivalAt?: string;
+      origin?: string;
+      destination?: string;
+      stops?: number;
+      flightNumbers?: string[];
+      returnDepartureAt?: string | null;
+      finalClientCents?: number | null;
+      platformFeeCents?: number | null;
+    }>;
     integrations: TravelIntegration[];
   } | null>(null);
   const [integrations, setIntegrations] = useState<TravelIntegration[]>([]);
@@ -304,17 +318,54 @@ export const TravelAndConciergeSection: React.FC = () => {
                     <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#39FF14]" />
                     <span>Ofertas reais retornadas via {flightResponse.provider}:</span>
                   </div>
-                  {flightResponse.offers.map((offer, idx) => (
-                    <div
-                      key={offer.id || idx}
-                      className="p-3 rounded-xl bg-white border-2 border-[#39FF14] flex justify-between font-mono-tabular font-bold"
-                    >
-                      <span>Oferta #{offer.id}</span>
-                      <span>
-                        {offer.price?.currency} {offer.price?.total}
-                      </span>
+                  {flightResponse.mode === 'test' && (
+                    <div className="p-2.5 rounded-lg bg-[#FFD700]/20 border border-[#111111]/20 font-semibold text-[#111111]">
+                      {flightResponse.message}
                     </div>
-                  ))}
+                  )}
+                  {flightResponse.offers.map((offer, idx) => {
+                    const hora = (iso?: string | null) => (iso ? iso.slice(11, 16) : '--:--');
+                    const dia = (iso?: string | null) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : '');
+                    return (
+                      <div
+                        key={offer.id || idx}
+                        className="p-3 rounded-xl bg-white border-2 border-[#39FF14] flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <div className="space-y-0.5">
+                          <div className="font-bold text-[#111111]">
+                            {offer.airline || 'Companhia aérea'}
+                            {offer.flightNumbers?.length ? (
+                              <span className="font-mono-tabular font-normal text-[#111111]/65"> · {offer.flightNumbers.join(' + ')}</span>
+                            ) : null}
+                          </div>
+                          {offer.departureAt && (
+                            <div className="font-mono-tabular text-[#111111]/80">
+                              {dia(offer.departureAt)} {offer.origin} {hora(offer.departureAt)} → {offer.destination}{' '}
+                              {hora(offer.arrivalAt)} ·{' '}
+                              {offer.stops ? `${offer.stops} parada${offer.stops > 1 ? 's' : ''}` : 'direto'}
+                              {offer.returnDepartureAt ? ` · volta ${dia(offer.returnDepartureAt)} ${hora(offer.returnDepartureAt)}` : ''}
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-right font-mono-tabular">
+                          {offer.finalClientCents ? (
+                            <>
+                              <div className="text-sm font-extrabold text-[#111111]">
+                                {formatMoney(offer.finalClientCents, 'BRL')}
+                              </div>
+                              <div className="text-[10px] text-[#111111]/65">
+                                inclui taxa Froc Rota {formatMoney(offer.platformFeeCents ?? 0, 'BRL')}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-sm font-extrabold text-[#111111]">
+                              {offer.price?.currency} {offer.price?.total}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-[#111111]/80">

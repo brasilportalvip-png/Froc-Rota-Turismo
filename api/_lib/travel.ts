@@ -1,3 +1,6 @@
+import { duffelMode, isMadrugada, searchDuffelOffers } from './duffel.js';
+import { computePriceFromRule, resolvePricingRule } from './pricing.js';
+
 export interface TravelIntegrationStatus {
   provider: string;
   category:
@@ -34,8 +37,8 @@ export function getTravelIntegrationsStatus(): TravelIntegrationStatus[] {
       docsUrl: 'https://developers.amadeus.com/self-service/category/flights/api-doc/flight-offers-search',
       requiredEnvVars: ['AMADEUS_CLIENT_ID', 'AMADEUS_CLIENT_SECRET'],
       notes: amadeusReady
-        ? 'Conectado via OAuth2 server-side para tarifas aéreas em tempo real, voos de madrugada e confirmação de tarifa.'
-        : 'Aguardando credenciais oficiais Amadeus para consulta de tarifas aéreas reais (nenhuma tarifa fictícia é inventada).',
+        ? 'Credenciais Amadeus presentes (o cadastro self-service da Amadeus foi encerrado em 17/07/2026; só funciona com contrato Enterprise).'
+        : 'A Amadeus encerrou o cadastro self-service em 17/07/2026; agora exige contrato Enterprise. O site usa a Duffel para passagens.',
     },
     {
       provider: 'Duffel Flights API (NDC Direto)',
@@ -43,7 +46,12 @@ export function getTravelIntegrationsStatus(): TravelIntegrationStatus[] {
       configured: Boolean(process.env.DUFFEL_ACCESS_TOKEN),
       docsUrl: 'https://duffel.com/docs/api/overview/welcome',
       requiredEnvVars: ['DUFFEL_ACCESS_TOKEN'],
-      notes: 'Distribuição NDC para emissão direta de bilhetes nacionais e internacionais.',
+      notes:
+        duffelMode() === 'live'
+          ? 'Conectado em modo real: preços e horários vêm direto das companhias aéreas.'
+          : duffelMode() === 'test'
+          ? 'Conectado em MODO TESTE: as ofertas são da companhia fictícia Duffel Airways (sem dinheiro). Ative a conta Duffel para ver companhias reais.'
+          : 'Aguardando DUFFEL_ACCESS_TOKEN para buscar passagens reais.',
     },
     {
       provider: 'Google Business Profile API (OAuth Lojistas)',
@@ -114,17 +122,63 @@ export async function searchLiveFlightsIfConfigured(params: {
   maxPriceBrl?: number;
   madrugadaOnly?: boolean;
 }) {
+  // Duffel primeiro (cadastro aberto); Amadeus só se alguém tiver contrato Enterprise.
+  if (process.env.DUFFEL_ACCESS_TOKEN) {
+    const mode = duffelMode();
+    let offers = await searchDuffelOffers({
+      originIata: params.originIata.toUpperCase().slice(0, 3),
+      destinationIata: params.destinationIata.toUpperCase().slice(0, 3),
+      departureDate: params.departureDate,
+      returnDate: params.tripType === 'round_trip' ? params.returnDate : undefined,
+      adults: params.adults,
+    });
+    if (params.madrugadaOnly) offers = offers.filter((o) => isMadrugada(o.departureAt));
+    // Taxa Froc Rota (regra de passagens do Motor Financeiro) só quando a tarifa vem em reais.
+    for (const o of offers) {
+      if (o.price.currency !== 'BRL') continue;
+      try {
+        const rule = await resolvePricingRule({ category: 'flights', costCents: o.totalCents });
+        if (rule) {
+          const b = computePriceFromRule({ supplierCostCents: o.totalCents, rule });
+          o.finalClientCents = b.finalClientCents;
+          o.platformFeeCents = b.finalClientCents - o.totalCents;
+        }
+      } catch {
+        // sem regra: mostra só a tarifa da companhia
+      }
+    }
+    if (params.maxPriceBrl && params.maxPriceBrl > 0) {
+      offers = offers.filter(
+        (o) => o.price.currency !== 'BRL' || (o.finalClientCents ?? o.totalCents) <= params.maxPriceBrl! * 100
+      );
+    }
+    return {
+      connected: true,
+      provider: mode === 'live' ? 'Duffel' : 'Duffel (modo teste)',
+      mode,
+      offers,
+      radarOpportunities: offers.slice(0, 5),
+      message:
+        offers.length === 0
+          ? 'Nenhuma oferta encontrada para essa data e rota. Tente outra data.'
+          : mode === 'test'
+          ? 'Modo teste: ofertas da companhia fictícia Duffel Airways, só para testar o site. Nenhuma compra real.'
+          : undefined,
+      integrations: getTravelIntegrationsStatus(),
+    };
+  }
+
   const clientId = process.env.AMADEUS_CLIENT_ID;
   const clientSecret = process.env.AMADEUS_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
     return {
       connected: false,
-      provider: 'Amadeus Flight Offers API v2',
+      provider: 'Duffel',
       offers: [],
       radarOpportunities: [],
       message:
-        'Integração aérea aguardando credenciais oficiais (AMADEUS_CLIENT_ID e AMADEUS_CLIENT_SECRET). Por transparência, tarifas, voos de madrugada ou assentos nunca são inventados.',
+        'Busca de passagens aguardando a chave da Duffel (DUFFEL_ACCESS_TOKEN). Por transparência, tarifas e horários nunca são inventados.',
       integrations: getTravelIntegrationsStatus(),
     };
   }
