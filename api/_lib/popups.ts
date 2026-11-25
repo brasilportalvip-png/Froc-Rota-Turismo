@@ -18,6 +18,9 @@ export const POPUP_CATEGORIES = [
 
 export type PopupCategory = (typeof POPUP_CATEGORIES)[number];
 
+/** Categorias que o Admin pode usar em pop-ups novos (o site não oferece cupons de desconto). */
+export const SELECTABLE_POPUP_CATEGORIES = POPUP_CATEGORIES.filter((c) => c !== 'Cupons');
+
 export interface SeedPopupModel {
   code: string;
   title: string;

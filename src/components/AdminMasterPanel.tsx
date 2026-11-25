@@ -1224,7 +1224,7 @@ export const AdminMasterPanel: React.FC<{
                     onChange={(e) => setNewPopCat(e.target.value)}
                     className="px-3 py-2 rounded-xl border border-[#111111]/25 bg-white"
                   >
-                    {(popupCategories.length ? popupCategories : ['Novidades', 'Cupons', 'Eventos']).map((c) => (
+                    {(popupCategories.length ? popupCategories : ['Novidades', 'Eventos']).map((c) => (
                       <option key={c} value={c}>
                         {c}
                       </option>

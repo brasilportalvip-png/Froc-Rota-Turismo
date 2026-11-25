@@ -26,7 +26,7 @@ import { publicIdentityStatus, IdentityCheckDoc } from './_lib/identity.js';
 import { refreshMerchantListingsVisibility } from './_lib/merchant-status.js';
 import { getGoogleBusinessOAuthConfig, getMercadoPagoOAuthConfig } from './_lib/oauth.js';
 import { getPaymentGatewayStatus } from './_lib/payment.js';
-import { POPUP_CATEGORIES } from './_lib/popups.js';
+import { SELECTABLE_POPUP_CATEGORIES } from './_lib/popups.js';
 import { getSecurityPostureSnapshot } from './_lib/security.js';
 import { ensureSeeded } from './_lib/seed.js';
 import { getTravelIntegrationsStatus } from './_lib/travel.js';
@@ -724,7 +724,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     try {
       const popups = await getAllDocs<{ code: string }>('popup_templates');
       popups.sort((a, b) => String(a.code).localeCompare(String(b.code)));
-      sendJson(res, 200, { popups, categories: POPUP_CATEGORIES });
+      sendJson(res, 200, { popups, categories: SELECTABLE_POPUP_CATEGORIES });
     } catch {
       sendJson(res, 500, { error: 'Erro ao carregar biblioteca de pop-ups.' });
     }

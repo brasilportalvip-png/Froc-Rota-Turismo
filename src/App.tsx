@@ -316,7 +316,13 @@ function FrocRotaPlatform() {
             href="#top"
             className="font-display text-lg sm:text-xl font-extrabold tracking-tight text-[#111111] inline-flex items-center gap-2 whitespace-nowrap shrink-0"
           >
-            <span className="w-3 h-3 rounded-full bg-[#39FF14] border border-[#111111] shadow-[0_0_10px_#39FF14]" />
+            <img
+              src="/logo-emblema.png"
+              alt="Logotipo Froc Rota Turismo"
+              width={36}
+              height={36}
+              className="w-9 h-9 rounded-lg shrink-0"
+            />
             <span>Froc Rota</span>
             <span className="text-[10px] font-mono-tabular px-1.5 py-0.5 rounded bg-[#111111] text-[#FFD700] font-bold">
               2030+
@@ -952,9 +958,9 @@ function FrocRotaPlatform() {
                 Conecte seu negócio turístico à Froc Rota Turismo
               </h2>
               <p className="text-sm text-[#111111]/75 leading-relaxed">
-                Anuncie no plano Básico de 30 dias por R$ 100,00 ou comece no Gratuito, com
-                calendário de vagas, Central de Marketing IA, Google Business Profile OAuth e
-                Mercado Pago Split.
+                Planos a partir de R$ 100,00 por mês com cobrança automática no cartão, cadastro
+                verificado (anti-fraude), calendário de vagas, Central de Marketing IA e recebimento
+                direto pelo Mercado Pago com split automático.
               </p>
             </div>
             <button
@@ -974,7 +980,14 @@ function FrocRotaPlatform() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 text-xs text-[#111111]/75">
           <div>
             <div className="font-display text-base font-extrabold text-[#111111] inline-flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#39FF14] border border-[#111111]" />
+              <img
+                src="/logo-emblema.png"
+                alt=""
+                width={28}
+                height={28}
+                loading="lazy"
+                className="w-7 h-7 rounded-md shrink-0"
+              />
               <span>Froc Rota Turismo 2030+</span>
             </div>
             <div className="mt-1 font-semibold">{t.slogan}</div>
