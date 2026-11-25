@@ -20,3 +20,13 @@ test('funções da Vercel (api/) importam arquivos locais com .js, nunca .ts', (
   }
   assert.deepEqual(bad, []);
 });
+
+// O firebase-admin 14 traz o jwks-rsa 4, que faz require('jose') de uma versão só-ESM.
+// A Vercel roda com --no-experimental-require-module: o firebase-admin não carregava
+// ("require() of ES Module .../jose ... not supported") e as rotas davam 500.
+test('jwks-rsa fixo na 3.x (jose 4, compatível com require) e instalação aceita a troca', () => {
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  assert.match(String(pkg.overrides?.['jwks-rsa'] ?? ''), /^3\./);
+  const vercel = JSON.parse(fs.readFileSync('vercel.json', 'utf8'));
+  assert.equal(vercel.installCommand, 'bun install');
+});
