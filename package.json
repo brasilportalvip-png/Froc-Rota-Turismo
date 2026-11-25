@@ -8,8 +8,9 @@
     "start": "vite preview --port 3000 --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist .vercel",
-    "lint": "tsc --noEmit"
+    "clean": "rm -rf dist dev-dist .vercel",
+    "lint": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts tests/*.test.tsx"
   },
   "dependencies": {
     "@firebase/eslint-plugin-security-rules": "^0.0.2",
