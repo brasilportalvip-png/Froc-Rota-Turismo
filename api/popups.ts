@@ -1,5 +1,5 @@
 import { ApiRequest, ApiResponse, checkRateLimit, enforceApiSecurity, sendJson } from './_lib/http.js';
-import { listActivePopups, POPUP_CATEGORIES } from './_lib/popups.js';
+import { listActivePopups, SELECTABLE_POPUP_CATEGORIES } from './_lib/popups.js';
 import { ensureSeeded } from './_lib/seed.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
@@ -12,7 +12,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   try {
     await ensureSeeded();
     const popups = await listActivePopups();
-    sendJson(res, 200, { popups, categories: POPUP_CATEGORIES });
+    sendJson(res, 200, { popups, categories: SELECTABLE_POPUP_CATEGORIES });
   } catch (error) {
     console.error('GET /api/popups error:', error);
     sendJson(res, 500, { error: 'Erro ao carregar modelos de pop-ups.' });
