@@ -17,7 +17,7 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
   onClose,
   onBook,
 }) => {
-  const { apiFetch, currency, dbUser, loginWithGoogle, notify } = useApp();
+  const { apiFetch, currency, dbUser, requestLogin, notify } = useApp();
   const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [merchantInfo, setMerchantInfo] = useState<{
@@ -48,7 +48,7 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
 
   const toggleFavorite = async () => {
     if (!dbUser) {
-      await loginWithGoogle();
+      await requestLogin();
       return;
     }
     try {
@@ -65,7 +65,7 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
 
   const handleReport = async () => {
     if (!dbUser) {
-      await loginWithGoogle();
+      await requestLogin();
       return;
     }
     try {
@@ -86,7 +86,7 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
   const handlePublishReview = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!dbUser) {
-      await loginWithGoogle();
+      await requestLogin();
       return;
     }
     if (!reviewText.trim()) return;

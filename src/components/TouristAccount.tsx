@@ -18,6 +18,7 @@ import {
   TouristDocument,
 } from '../types.ts';
 import { useApp } from '../context/AppContext.tsx';
+import { IdentityVerification } from './IdentityVerification.tsx';
 import { formatMoney } from '../i18n/translations.ts';
 import { FuturisticModalHeader, SecurityPinCard } from './DesignSystem.tsx';
 
@@ -56,7 +57,6 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
   const [flightOrders, setFlightOrders] = useState<FlightOrder[]>([]);
   const [flightAlerts, setFlightAlerts] = useState<FlightAlert[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [coupons, setCoupons] = useState<Array<{ id: number; code: string; discountPercent: number }>>([]);
 
   const [loading, setLoading] = useState(true);
   const [confirmCancelBookingId, setConfirmCancelBookingId] = useState<number | null>(null);
@@ -102,7 +102,6 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
           flightOrders: FlightOrder[];
           flightAlerts: FlightAlert[];
           notifications: NotificationItem[];
-          coupons: Array<{ id: number; code: string; discountPercent: number }>;
         }>('/api/tourist/hub'),
       ]);
 
@@ -115,7 +114,6 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
       setFlightOrders(hub.flightOrders || []);
       setFlightAlerts(hub.flightAlerts || []);
       setNotifications(hub.notifications || []);
-      setCoupons(hub.coupons || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -313,7 +311,7 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
             { id: 'timeline', label: `🗓️ Minhas Viagens (${timelineItems.length})` },
             { id: 'docs', label: `📄 Documentos (${documents.length})` },
             { id: 'flights', label: `✈️ Voos & Alertas (${flightOrders.length + flightAlerts.length})` },
-            { id: 'notifications', label: `🔔 Notificações & Cupons (${unreadCount})` },
+            { id: 'notifications', label: `🔔 Notificações (${unreadCount})` },
             { id: 'profile', label: '🔐 Dados & Segurança' },
           ].map((t) => (
             <button
@@ -332,6 +330,7 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
         </div>
 
         <div className="p-6 md:p-8 space-y-6">
+          <IdentityVerification purpose="para reservar" />
           {loading ? (
             <div className="py-8 text-center text-sm text-[#111111]/70">
               Carregando sua central de viagens...
@@ -652,20 +651,6 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
                     )}
                   </div>
 
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-semibold text-[#111111]">
-                      Cupons Disponíveis ({coupons.length})
-                    </h3>
-                    {coupons.map((c) => (
-                      <div
-                        key={c.id}
-                        className="p-3.5 rounded-xl border border-[#111111]/15 flex items-center justify-between text-xs font-mono-tabular"
-                      >
-                        <span className="font-bold text-[#111111]">{c.code}</span>
-                        <span>{c.discountPercent}% OFF em reservas elegíveis</span>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               )}
 

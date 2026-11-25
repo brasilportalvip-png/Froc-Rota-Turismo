@@ -1,11 +1,15 @@
 import crypto from 'node:crypto';
 import { Type } from '@google/genai';
 import { adminDb } from './_lib/firebase-admin.js';
+import { agentReviewListing, agentVerifyMerchant } from './_lib/agent-jobs.js';
 import { dispatchAgentTask } from './_lib/agents.js';
 import { recordAuditLog } from './_lib/audit.js';
 import { authenticateRequest } from './_lib/auth.js';
 import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.js';
 import { generateResilientJson, resolveGeminiKeySlots } from './_lib/gemini-resilience.js';
+import { getIdentityCheck, isIdentityApproved, isValidCnpj, isValidCpf, normalizeCpf, publicIdentityStatus } from './_lib/identity.js';
+import { isPlanActive, merchantBlockers, MerchantLike, refreshMerchantListingsVisibility } from './_lib/merchant-status.js';
+import { cancelCardSubscription, createCardSubscription } from './_lib/mp-marketplace.js';
 import {
   ApiRequest,
   ApiResponse,
@@ -28,7 +32,6 @@ import {
   getMercadoPagoOAuthConfig,
   verifyOAuthState,
 } from './_lib/oauth.js';
-import { createMercadoPagoPreference } from './_lib/payment.js';
 import { ensureSeeded } from './_lib/seed.js';
 
 interface MerchantDoc {
@@ -52,6 +55,9 @@ interface MerchantDoc {
   gbpSyncedAt?: string | null;
   mpOauthConnected?: boolean;
   mpCollectorId?: string | null;
+  planExpiresAt?: string | null;
+  planStatus?: string | null;
+  verificationReason?: string | null;
   createdAt: string;
 }
 
@@ -163,6 +169,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         userId: parsed.userId,
         merchantId: parsed.merchantId,
       });
+      // Conta conectada: anúncios que só esperavam o split já podem ir ao ar.
+      await refreshMerchantListingsVisibility(parsed.merchantId);
       sendHtml(
         res,
         200,
@@ -221,7 +229,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         documentNumber,
         cadasturNumber,
         category,
-        planSlug = 'free',
+        planSlug = 'basic',
         city,
         state,
         phone,
@@ -233,6 +241,24 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         return;
       }
 
+      // Anti-fraude: só anuncia quem confirmou o e-mail e teve a identidade (CPF + fotos) aprovada.
+      if (auth.authUser.email_verified !== true) {
+        sendJson(res, 403, { error: 'Confirme seu e-mail antes de cadastrar a empresa.', code: 'EMAIL_NOT_VERIFIED' });
+        return;
+      }
+      if (!(await isIdentityApproved(user.uid, user.role))) {
+        sendJson(res, 403, {
+          error: 'Antes de anunciar, conclua a verificação de identidade (CPF + foto do documento + selfie).',
+          code: 'IDENTITY_REQUIRED',
+        });
+        return;
+      }
+      const docDigits = normalizeCpf(documentNumber);
+      if (!(docDigits.length === 11 ? isValidCpf(docDigits) : isValidCnpj(docDigits))) {
+        sendJson(res, 400, { error: 'Informe um CPF ou CNPJ válido.' });
+        return;
+      }
+
       const existing = await findUserMerchant();
       if (existing) {
         sendJson(res, 409, { error: 'Esta conta já possui um cadastro comercial ativo.' });
@@ -240,7 +266,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       }
 
       const allPlans = await getAllDocs<PlanDoc & Record<string, unknown>>('merchant_plans');
-      const plan = allPlans.find((p) => p.slug === String(planSlug)) ?? allPlans[0];
+      // Sem plano gratuito: só planos pagos e ativos.
+      const paidPlans = allPlans
+        .filter((p) => (p as { active?: boolean }).active !== false && Number(p.monthlyPriceCents) > 0)
+        .sort((a, b) => a.monthlyPriceCents - b.monthlyPriceCents);
+      const plan = paidPlans.find((p) => p.slug === String(planSlug)) ?? paidPlans[0];
+      if (!plan) {
+        sendJson(res, 503, { error: 'Nenhum plano disponível no momento.' });
+        return;
+      }
       const riskLevel =
         category === 'nautical' || category === 'adventure' ? 'high_risk_nautical' : 'standard';
 
@@ -251,7 +285,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         userUid: user.uid,
         companyName: String(companyName).slice(0, 140),
         tradeName: String(tradeName).slice(0, 120),
-        documentNumber: String(documentNumber).slice(0, 30),
+        documentNumber: docDigits,
         cadasturNumber: cadasturNumber ? String(cadasturNumber).slice(0, 40) : null,
         category: String(category),
         riskLevel,
@@ -263,6 +297,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         bio: String(bio || '').slice(0, 500),
         gbpConnected: false,
         mpOauthConnected: false,
+        planStatus: 'awaiting_payment',
+        planExpiresAt: null,
         createdAt: new Date().toISOString(),
       };
 
@@ -280,7 +316,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         details: { tradeName, planSlug: plan.slug, riskLevel },
       });
 
-      sendJson(res, 201, { merchant });
+      // A IA verifica o parceiro na hora (aprova, reprova ou manda para o Admin).
+      let verification = { status: 'manual_review', reason: '' };
+      try {
+        verification = await agentVerifyMerchant(id);
+      } catch (verErr) {
+        console.error('merchant verification failed:', verErr);
+      }
+      const fresh = (await adminDb.collection('merchants').doc(String(id)).get()).data() ?? merchant;
+
+      sendJson(res, 201, { merchant: fresh, verification, plan });
     } catch (error) {
       console.error('POST /api/merchant/onboard error:', error);
       sendJson(res, 500, { error: 'Erro ao cadastrar parceiro.' });
@@ -293,7 +338,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     try {
       const merchant = await findUserMerchant();
       if (!merchant) {
-        sendJson(res, 200, { merchant: null, plan: null, listings: [], bookings: [], reviews: [] });
+        sendJson(res, 200, {
+          merchant: null,
+          plan: null,
+          planActive: false,
+          blockers: [],
+          identity: publicIdentityStatus(await getIdentityCheck(user.uid)),
+          listings: [],
+          bookings: [],
+          reviews: [],
+        });
         return;
       }
 
@@ -356,6 +410,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       sendJson(res, 200, {
         merchant,
         plan,
+        planActive: isPlanActive(merchant),
+        blockers: merchantBlockers(merchant as MerchantLike),
+        identity: publicIdentityStatus(await getIdentityCheck(user.uid)),
         listings: mListings,
         bookings: mBookings,
         reviews: mReviews,
@@ -380,7 +437,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         adminDb.collection('merchant_plans').doc(String(merchant.planId)).get(),
         adminDb.collection('listings').where('merchantId', '==', merchant.id).get(),
       ]);
-      const plan = (planSnap.data() as PlanDoc) ?? { name: 'Gratuito', maxListings: 3 };
+      if (merchant.verificationStatus === 'rejected') {
+        sendJson(res, 403, { error: `Cadastro reprovado: ${merchant.verificationReason || 'fale com o suporte'}.` });
+        return;
+      }
+      if (merchant.userUid && !isPlanActive(merchant)) {
+        sendJson(res, 402, {
+          error: 'Ative seu plano (cobrança automática no cartão) para publicar anúncios.',
+          code: 'PLAN_REQUIRED',
+        });
+        return;
+      }
+      const plan = (planSnap.data() as PlanDoc) ?? { name: 'Plano', maxListings: 0 };
       if (existingSnap.size >= plan.maxListings) {
         sendJson(res, 403, {
           error: `Limite de ${plan.maxListings} anúncios atingido para o plano ${plan.name}.`,
@@ -490,8 +558,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         coverImage: safeCover,
         isFeatured: false,
         isSponsored: false,
-        status: merchant.verificationStatus === 'verified' ? 'active' : 'pending',
-        expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+        // No ar só com parceiro verificado + plano em dia + Mercado Pago conectado (split).
+        status: merchantBlockers(merchant as MerchantLike).length === 0 ? 'active' : 'pending',
+        pendingReason:
+          merchantBlockers(merchant as MerchantLike).length === 0
+            ? null
+            : `Falta: ${merchantBlockers(merchant as MerchantLike).join(', ')}`,
+        expiresAt: merchant.planExpiresAt ?? new Date(Date.now() + 30 * 86400000).toISOString(),
         ratingAvg: 5,
         reviewCount: 0,
         createdAt: nowIso,
@@ -525,7 +598,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         details: { title: created.title, status: created.status },
       });
 
-      sendJson(res, 201, { listing: created });
+      try {
+        await agentReviewListing(id);
+      } catch (revErr) {
+        console.error('listing review failed:', revErr);
+      }
+      const freshListing = (await adminDb.collection('listings').doc(String(id)).get()).data() ?? created;
+
+      sendJson(res, 201, { listing: freshListing });
     } catch (error) {
       console.error('POST /api/merchant/listings error:', error);
       sendJson(res, 500, { error: 'Erro ao criar anúncio.' });
@@ -632,8 +712,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         entityType: 'listing',
         entityId: existing.id,
       });
+      try {
+        await agentReviewListing(existing.id);
+      } catch (revErr) {
+        console.error('listing review failed:', revErr);
+      }
+      const freshEdited = (await ref.get()).data() ?? { ...existing, ...updates };
 
-      sendJson(res, 200, { listing: { ...existing, ...updates } });
+      sendJson(res, 200, { listing: freshEdited });
     } catch (error) {
       console.error('PATCH /api/merchant/listings/:id error:', error);
       sendJson(res, 500, { error: 'Erro ao atualizar anúncio.' });
@@ -663,7 +749,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         body.status === 'paused'
           ? 'paused'
           : body.status === 'active'
-          ? merchant.verificationStatus === 'verified'
+          ? merchantBlockers(merchant as MerchantLike).length === 0 &&
+            (existing as ListingDoc & { flaggedBy?: string }).flaggedBy !== 'ia'
             ? 'active'
             : 'pending'
           : existing.status;
@@ -803,7 +890,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return;
   }
 
-  // POST /api/merchant/plans/subscribe (Free immediate; Paid strictly via Mercado Pago webhook)
+  // POST /api/merchant/plans/subscribe — só planos pagos, com cobrança automática mensal no cartão (Mercado Pago)
   if (req.method === 'POST' && route === '/merchant/plans/subscribe') {
     try {
       const merchant = await findUserMerchant();
@@ -811,65 +898,118 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         sendJson(res, 403, { error: 'Cadastre sua empresa antes de contratar um plano.' });
         return;
       }
-      const body = await parseJsonBody<{ planSlug?: string; autoRenew?: boolean }>(req);
+      if (merchant.verificationStatus !== 'verified') {
+        // Primeiro a IA (ou a equipe) aprova o parceiro; só depois ele paga o plano.
+        sendJson(res, 403, {
+          error:
+            merchant.verificationStatus === 'rejected'
+              ? `Cadastro reprovado: ${merchant.verificationReason || 'fale com o suporte'}.`
+              : 'Aguarde a aprovação do seu cadastro para assinar o plano.',
+          code: 'MERCHANT_NOT_VERIFIED',
+        });
+        return;
+      }
+      const body = await parseJsonBody<{ planSlug?: string }>(req);
       const allPlans = await getAllDocs<PlanDoc & Record<string, unknown>>('merchant_plans');
-      const plan = allPlans.find((p) => p.slug === String(body.planSlug));
+      const plan = allPlans.find(
+        (p) => p.slug === String(body.planSlug) && p.active !== false && Number(p.monthlyPriceCents) > 0
+      );
       if (!plan) {
-        sendJson(res, 404, { error: 'Plano comercial não encontrado.' });
+        sendJson(res, 404, { error: 'Plano não encontrado.' });
+        return;
+      }
+      if (!process.env.MERCADOPAGO_ACCESS_TOKEN) {
+        sendJson(res, 503, { error: 'Pagamentos ainda não configurados. Tente mais tarde.' });
         return;
       }
 
-      const isFree = plan.monthlyPriceCents === 0;
       const now = new Date();
-      const expiresAt = new Date(now.getTime() + (plan.durationDays || 30) * 86400000);
       const id = await nextSeqId('merchant_subscriptions');
-
       const sub = {
         id,
         merchantId: merchant.id,
         planId: plan.id,
-        status: isFree ? 'active' : 'pending_payment',
+        status: 'pending_authorization',
+        billing: 'card_recurring',
         amountCents: plan.monthlyPriceCents,
+        durationDays: plan.durationDays || 30,
         paymentRef: null,
-        startsAt: isFree ? now.toISOString() : null,
-        expiresAt: isFree ? expiresAt.toISOString() : null,
-        autoRenew: body.autoRenew !== false,
+        mpPreapprovalId: null as string | null,
+        startsAt: null,
+        expiresAt: null,
+        autoRenew: true,
         courtesyByEmail: null,
         createdAt: now.toISOString(),
       };
-
       await adminDb.collection('merchant_subscriptions').doc(String(id)).set(sub);
-      if (isFree) {
-        await adminDb.collection('merchants').doc(String(merchant.id)).set({ planId: plan.id }, { merge: true });
-      }
 
       let checkoutUrl: string | null = null;
-      if (!isFree && process.env.MERCADOPAGO_ACCESS_TOKEN) {
-        try {
-          const pref = await createMercadoPagoPreference({
-            bookingCode: `SUB-${sub.id}`,
-            title: `Plano ${plan.name} (${plan.durationDays} dias) - Froc Rota`,
-            amountCents: plan.monthlyPriceCents,
-            payerEmail: user.email,
-            appUrl: getAppBaseUrl(),
-          });
-          checkoutUrl = pref?.init_point ?? null;
-        } catch (mpErr) {
-          console.error('Mercado Pago plan preference failed:', mpErr);
+      try {
+        const pre = await createCardSubscription({
+          subscriptionId: id,
+          planName: plan.name,
+          amountCents: plan.monthlyPriceCents,
+          payerEmail: user.email,
+          appUrl: getAppBaseUrl(),
+        });
+        if (pre) {
+          checkoutUrl = pre.init_point;
+          sub.mpPreapprovalId = pre.id;
+          await adminDb.collection('merchant_subscriptions').doc(String(id)).set({ mpPreapprovalId: pre.id }, { merge: true });
         }
+      } catch (mpErr) {
+        console.error('Mercado Pago preapproval failed:', mpErr);
+        await adminDb.collection('merchant_subscriptions').doc(String(id)).set({ status: 'failed' }, { merge: true });
+        sendJson(res, 502, {
+          error: 'O Mercado Pago recusou criar a assinatura. Confira se o e-mail da sua conta Mercado Pago é o mesmo deste cadastro.',
+        });
+        return;
       }
 
       sendJson(res, 201, {
         subscription: sub,
         plan,
         checkoutUrl,
-        message: isFree
-          ? 'Plano gratuito ativado.'
-          : 'Assinatura criada como pending_payment. Será ativada automaticamente após aprovação no Mercado Pago.',
+        message:
+          'Cadastre o cartão no Mercado Pago. O plano ativa na primeira cobrança aprovada e renova sozinho todo mês.',
       });
     } catch (error) {
       console.error('POST /api/merchant/plans/subscribe error:', error);
       sendJson(res, 500, { error: 'Erro ao contratar plano.' });
+    }
+    return;
+  }
+
+  // POST /api/merchant/plans/cancel — desliga a cobrança automática (o plano vale até o fim do período pago)
+  if (req.method === 'POST' && route === '/merchant/plans/cancel') {
+    try {
+      const merchant = await findUserMerchant();
+      if (!merchant) {
+        sendJson(res, 403, { error: 'Conta comercial não encontrada.' });
+        return;
+      }
+      const subs = await adminDb.collection('merchant_subscriptions').where('merchantId', '==', merchant.id).get();
+      let cancelled = 0;
+      for (const d of subs.docs) {
+        const sd = d.data() as { mpPreapprovalId?: string | null; status: string };
+        if (!sd.mpPreapprovalId || ['cancelled', 'replaced', 'failed'].includes(sd.status)) continue;
+        if (await cancelCardSubscription(sd.mpPreapprovalId)) {
+          await d.ref.set({ autoRenew: false, status: sd.status === 'active' ? 'active_until_end' : 'cancelled' }, { merge: true });
+          cancelled += 1;
+        }
+      }
+      await recordAuditLog({
+        actorUserId: user.id,
+        actorEmail: user.email,
+        action: 'MERCHANT_PLAN_AUTORENEW_CANCELLED',
+        entityType: 'merchant',
+        entityId: merchant.id,
+        details: { cancelled },
+      });
+      sendJson(res, 200, { cancelled, planExpiresAt: merchant.planExpiresAt ?? null });
+    } catch (error) {
+      console.error('POST /api/merchant/plans/cancel error:', error);
+      sendJson(res, 500, { error: 'Erro ao cancelar a cobrança automática.' });
     }
     return;
   }

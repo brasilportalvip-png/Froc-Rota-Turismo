@@ -290,6 +290,8 @@ export async function dispatchAgentTask(params: {
   const candidates = candidatesSnap.docs.map((d) => d.data() as AiAgentDoc);
   const agent = candidates[Math.floor(Math.random() * Math.max(1, candidates.length))];
   if (!agent) {
+    // Sem agente cadastrado o trabalho real ainda precisa acontecer (ex.: verificar identidade).
+    if (params.executor) await params.executor();
     return null;
   }
 

@@ -14,7 +14,7 @@ interface TravelIntegration {
 }
 
 export const TravelAndConciergeSection: React.FC = () => {
-  const { apiFetch, currency, dbUser, language, loginWithGoogle, notify } = useApp();
+  const { apiFetch, currency, dbUser, language, requestLogin, notify } = useApp();
   const t = TRANSLATIONS[language];
 
   // Travel search state
@@ -109,7 +109,7 @@ export const TravelAndConciergeSection: React.FC = () => {
 
   const handleQuickFlightAlert = async () => {
     if (!dbUser) {
-      await loginWithGoogle();
+      await requestLogin();
       return;
     }
     try {
@@ -131,7 +131,7 @@ export const TravelAndConciergeSection: React.FC = () => {
   const handleConciergeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!dbUser) {
-      await loginWithGoogle();
+      await requestLogin();
       return;
     }
     setSendingConcierge(true);
@@ -557,7 +557,7 @@ export const TravelAndConciergeSection: React.FC = () => {
                     ? 'Registrando briefing...'
                     : dbUser
                     ? '✨ Solicitar Proposta Froc Rota Concierge'
-                    : 'Entrar com Google e Solicitar Concierge'}
+                    : 'Entrar e Solicitar Concierge'}
                 </button>
               </form>
             )}

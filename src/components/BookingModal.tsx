@@ -4,6 +4,7 @@ import { AvailabilitySlot, Booking, Listing } from '../types.ts';
 import { useApp } from '../context/AppContext.tsx';
 import { formatMoney } from '../i18n/translations.ts';
 import { FuturisticModalHeader } from './DesignSystem.tsx';
+import { IdentityVerification } from './IdentityVerification.tsx';
 
 interface BookingModalProps {
   listing: Listing;
@@ -18,7 +19,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   onClose,
   onSuccess,
 }) => {
-  const { apiFetch, currency, dbUser, loginWithGoogle, notify } = useApp();
+  const { apiFetch, currency, dbUser, emailVerified, identity, requestLogin, notify } = useApp();
   const [selectedSlotId, setSelectedSlotId] = useState<number | ''>(slots[0]?.id ?? '');
   const [checkInDate, setCheckInDate] = useState(
     slots[0]?.date ?? new Date(Date.now() + 86400000).toISOString().slice(0, 10)
@@ -27,8 +28,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10)
   );
   const [guestsCount, setGuestsCount] = useState(2);
-  const [couponCode, setCouponCode] = useState('');
-  const [discountPercent, setDiscountPercent] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'card'>('pix');
   const [guestNotes, setGuestNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -46,32 +45,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       : guestsCount;
 
   const baseTotalCents = listing.priceCents * units;
-  const discountCents = Math.round((baseTotalCents * discountPercent) / 100);
-  const finalTotalCents = Math.max(0, baseTotalCents - discountCents);
-
-  const applyCoupon = async () => {
-    if (!couponCode.trim()) return;
-    try {
-      const res = await apiFetch<{ valid: boolean; coupon: { discountPercent: number; code: string } }>(
-        '/api/coupons/validate',
-        {
-          method: 'POST',
-          body: JSON.stringify({ code: couponCode }),
-        }
-      );
-      setDiscountPercent(res.coupon.discountPercent);
-      setCouponCode(res.coupon.code);
-      notify(`Cupom ${res.coupon.code} aplicado (${res.coupon.discountPercent}% OFF).`, 'success');
-    } catch (err: unknown) {
-      setDiscountPercent(0);
-      notify(err instanceof Error ? err.message : 'Cupom inválido.', 'error');
-    }
-  };
+  const finalTotalCents = baseTotalCents;
+  const isStaff = dbUser?.role === 'admin' || dbUser?.role === 'subadmin';
+  // Anti-fraude: e-mail confirmado + identidade aprovada antes de reservar.
+  const needsVerification = Boolean(dbUser) && !isStaff && (!emailVerified || identity?.status !== 'approved');
 
   const handleCreateBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!dbUser) {
-      await loginWithGoogle();
+      await requestLogin();
       return;
     }
     setSubmitting(true);
@@ -84,7 +66,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           checkInDate,
           checkOutDate: listing.moduleType === 'accommodation' ? checkOutDate : null,
           guestsCount,
-          couponCode: discountPercent > 0 ? couponCode : null,
           paymentMethod,
           guestNotes,
         }),
@@ -184,6 +165,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             </button>
           </div>
         ) : (
+          <>
+          {/* Fora do formulário da reserva: formulário dentro de formulário enviaria a reserva junto. */}
+          {needsVerification && (
+            <div className="px-6 pt-6">
+              <IdentityVerification purpose="para reservar" compact />
+            </div>
+          )}
           <form onSubmit={handleCreateBooking} className="p-6 space-y-4">
             {slots.length > 0 && (
               <div>
@@ -252,28 +240,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
             <div>
               <label className="block text-xs font-semibold text-[#111111] mb-1">
-                Cupom promocional (ex: FROC10)
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={couponCode}
-                  onChange={(e) => setCouponCode(e.target.value)}
-                  placeholder="Digite o código"
-                  className="flex-1 px-3 py-2 rounded-lg border border-[#111111]/15 text-sm uppercase"
-                />
-                <button
-                  type="button"
-                  onClick={applyCoupon}
-                  className="px-4 py-2 rounded-lg border border-[#111111]/15 text-xs font-semibold hover:bg-white"
-                >
-                  Aplicar
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-[#111111] mb-1">
                 Forma de pagamento (Gateway Mercado Pago)
               </label>
               <div className="grid grid-cols-2 gap-2">
@@ -324,12 +290,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <span>Subtotal ({units}x)</span>
                 <span className="font-mono-tabular">{formatMoney(baseTotalCents, currency)}</span>
               </div>
-              {discountCents > 0 && (
-                <div className="flex justify-between font-bold text-[#FF1493]">
-                  <span>Desconto ({discountPercent}%)</span>
-                  <span className="font-mono-tabular">-{formatMoney(discountCents, currency)}</span>
-                </div>
-              )}
               <div className="flex justify-between text-sm font-extrabold text-[#111111] pt-1.5 border-t border-[#111111]/15">
                 <span>Total a pagar</span>
                 <span className="font-mono-tabular">{formatMoney(finalTotalCents, currency)}</span>
@@ -351,17 +311,20 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={submitting}
-                className="flex-1 min-h-[46px] py-3 rounded-xl froc-btn-neon text-sm font-extrabold"
+                disabled={submitting || needsVerification}
+                className="flex-1 min-h-[46px] py-3 rounded-xl froc-btn-neon text-sm font-extrabold disabled:opacity-50"
               >
                 {submitting
                   ? 'Processando reserva...'
+                  : needsVerification
+                  ? 'Conclua a verificação acima'
                   : dbUser
                   ? 'Confirmar Solicitação de Reserva'
-                  : 'Entrar com Google e Reservar'}
+                  : 'Entrar e Reservar'}
               </button>
             </div>
           </form>
+          </>
         )}
       </div>
     </div>

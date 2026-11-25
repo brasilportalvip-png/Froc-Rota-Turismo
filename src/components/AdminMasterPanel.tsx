@@ -28,6 +28,7 @@ import {
   PricingRule,
 } from '../types.ts';
 import { useApp } from '../context/AppContext.tsx';
+import { AdminTrustPanel } from './AdminTrustPanel.tsx';
 import { formatMoney } from '../i18n/translations.ts';
 import { FuturisticModalHeader, SecurityPinCard } from './DesignSystem.tsx';
 
@@ -44,7 +45,6 @@ interface AdminOverview {
   merchants: Merchant[];
   plans: MerchantPlan[];
   bookings: Booking[];
-  coupons: Array<{ id: number; code: string; discountPercent: number; usedCount: number; maxUses: number }>;
   conciergeRequests: ConciergeRequest[];
   reports: Array<{ id: number; targetType: string; targetId: number; reason: string; status: string }>;
   auditLogs: Array<{ id: number; actorEmail: string | null; action: string; entityType: string; entityId: string; createdAt: string }>;
@@ -192,12 +192,10 @@ export const AdminMasterPanel: React.FC<{
   };
 
   const [tab, setTab] = useState<
-    'merchants' | 'finance' | 'agents' | 'editorial' | 'popups' | 'concierge' | 'subadmins' | 'integrations' | 'audit'
+    'merchants' | 'trust' | 'finance' | 'agents' | 'editorial' | 'popups' | 'concierge' | 'subadmins' | 'integrations' | 'audit'
   >(getDefaultAllowedTab);
 
   // Forms & filters
-  const [couponCode, setCouponCode] = useState('');
-  const [couponPct, setCouponPct] = useState('15');
   const [proposalDraft, setProposalDraft] = useState<Record<number, { summary: string; amount: string }>>({});
 
   // Finance rule & simulator
@@ -252,7 +250,6 @@ export const AdminMasterPanel: React.FC<{
           merchants: [],
           plans: [],
           bookings: [],
-          coupons: [],
           conciergeRequests: [],
           reports: [],
           auditLogs: [],
@@ -261,13 +258,11 @@ export const AdminMasterPanel: React.FC<{
           loaders.push(
             apiFetch<{
               merchants: Merchant[];
-              coupons: AdminOverview['coupons'];
               listings: unknown[];
             }>('/api/admin/merchants').then((res) => {
               setData({
                 ...emptyOverview,
                 merchants: res.merchants || [],
-                coupons: res.coupons || [],
                 metrics: {
                   ...emptyOverview.metrics,
                   merchantsCount: res.merchants?.length || 0,
@@ -360,33 +355,20 @@ export const AdminMasterPanel: React.FC<{
     }
   }, [tab, runPricingSimulation]);
 
-  const verifyMerchant = async (id: number, status: 'verified' | 'rejected') => {
+  const verifyMerchant = async (id: number, status: 'verified' | 'rejected' | 'ai') => {
     try {
       await apiFetch(`/api/admin/merchants/${id}/verify`, {
         method: 'PATCH',
         body: JSON.stringify({ status }),
       });
-      notify(`Comerciante marcado como ${status}.`, 'success');
+      notify(status === 'ai' ? 'A IA verificou o parceiro de novo.' : `Parceiro marcado como ${status === 'verified' ? 'aprovado' : 'reprovado'}.`, 'success');
       await loadAllAdmin();
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : 'Erro ao verificar.', 'error');
     }
   };
 
-  const createCoupon = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await apiFetch('/api/admin/coupons', {
-        method: 'POST',
-        body: JSON.stringify({ code: couponCode, discountPercent: Number(couponPct) }),
-      });
-      setCouponCode('');
-      notify('Cupom criado e auditado!', 'success');
-      await loadAllAdmin();
-    } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'Erro ao criar cupom.', 'error');
-    }
-  };
+
 
   const handleCreateRule = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -635,7 +617,12 @@ export const AdminMasterPanel: React.FC<{
 
             <div className="flex flex-wrap gap-1.5 border-b border-[#111111]/15 pb-4">
               {[
-                { id: 'merchants', label: 'Parceiros & Cupons', show: hasAdminPermission('merchants') },
+                { id: 'merchants', label: 'Parceiros', show: hasAdminPermission('merchants') },
+                {
+                  id: 'trust',
+                  label: '🛡️ Verificações & Relatórios IA',
+                  show: hasAdminPermission('security') || hasAdminPermission('agents') || hasAdminPermission('merchants'),
+                },
                 { id: 'finance', label: 'Motor Financeiro & Planos', show: hasAdminPermission('finance') },
                 { id: 'agents', label: '🤖 200 Agentes IA', show: hasAdminPermission('agents') },
                 { id: 'editorial', label: `📰 5 Posts Diários (${posts.length})`, show: hasAdminPermission('editorial') },
@@ -680,6 +667,7 @@ export const AdminMasterPanel: React.FC<{
                         <div className="text-[#111111]/70 mt-0.5">
                           Doc: {m.documentNumber} · Cadastur: {m.cadasturNumber || 'N/I'} ·
                           Status: <strong>{m.verificationStatus}</strong>
+                          {m.verificationReason ? <> · {m.verificationReason}</> : null}
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -697,51 +685,22 @@ export const AdminMasterPanel: React.FC<{
                         >
                           Rejeitar
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => verifyMerchant(m.id, 'ai')}
+                          className="px-3 py-1.5 rounded-lg border border-[#111111]/25 font-semibold"
+                        >
+                          Verificar com IA
+                        </button>
                       </div>
                     </div>
                   ))}
                 </div>
 
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold text-[#111111]">Cupons Ativos</h3>
-                  <form onSubmit={createCoupon} className="flex gap-2">
-                    <input
-                      required
-                      value={couponCode}
-                      onChange={(e) => setCouponCode(e.target.value)}
-                      placeholder="Código (VERAO15)"
-                      className="flex-1 px-3 py-2 rounded-lg border border-[#111111]/15 text-xs uppercase"
-                    />
-                    <input
-                      required
-                      type="number"
-                      min={1}
-                      max={70}
-                      value={couponPct}
-                      onChange={(e) => setCouponPct(e.target.value)}
-                      className="w-16 px-2 py-2 rounded-lg border border-[#111111]/15 text-xs font-mono-tabular"
-                    />
-                    <button
-                      type="submit"
-                      className="px-3 py-2 rounded-lg bg-[#111111] text-[#39FF14] text-xs font-semibold"
-                    >
-                      Criar
-                    </button>
-                  </form>
-                  {data.coupons.map((c) => (
-                    <div
-                      key={c.id}
-                      className="p-3 rounded-lg border border-[#111111]/15 flex justify-between text-xs font-mono-tabular"
-                    >
-                      <span className="font-semibold">{c.code}</span>
-                      <span>
-                        {c.discountPercent}% OFF · {c.usedCount}/{c.maxUses}
-                      </span>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
+
+            {tab === 'trust' && <AdminTrustPanel />}
 
             {tab === 'finance' && finance && (
               <div className="space-y-6">

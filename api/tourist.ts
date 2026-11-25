@@ -1,10 +1,23 @@
 import crypto from 'node:crypto';
 import { adminDb } from './_lib/firebase-admin.js';
+import { agentModerateReview } from './_lib/agent-jobs.js';
 import { dispatchAgentTask } from './_lib/agents.js';
 import { askFrocRotaAI } from './_lib/ai.js';
 import { recordAuditLog } from './_lib/audit.js';
 import { authenticateRequest } from './_lib/auth.js';
 import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.js';
+import {
+  analyzeIdentityWithAI,
+  cpfHash,
+  decideIdentity,
+  getIdentityCheck,
+  IdentityCheckDoc,
+  isValidCpf,
+  maskCpf,
+  normalizeCpf,
+  parseImageDataUrl,
+  publicIdentityStatus,
+} from './_lib/identity.js';
 import {
   ApiRequest,
   ApiResponse,
@@ -128,10 +141,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         .limit(1)
         .get();
       const merchant = merchantSnap.empty ? null : merchantSnap.docs[0].data();
+      const identityCheck = await getIdentityCheck(user.uid);
       sendJson(res, 200, {
         user,
         merchant,
         adminPermissions: auth.adminPermissions,
+        emailVerified: auth.authUser.email_verified === true,
+        identity: publicIdentityStatus(identityCheck),
       });
     } catch (error) {
       console.error('GET /api/me error:', error);
@@ -175,6 +191,234 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } catch (error) {
       console.error('PATCH /api/me error:', error);
       sendJson(res, 500, { error: 'Falha ao atualizar perfil.' });
+    }
+    return;
+  }
+
+
+  // ========================
+  // VERIFICAÇÃO DE IDENTIDADE (anti-fraude): CPF + foto do documento + selfie
+  // ========================
+  if (req.method === 'GET' && route === '/identity/status') {
+    try {
+      sendJson(res, 200, {
+        identity: publicIdentityStatus(await getIdentityCheck(user.uid)),
+        emailVerified: auth.authUser.email_verified === true,
+      });
+    } catch (error) {
+      console.error('GET /api/identity/status error:', error);
+      sendJson(res, 500, { error: 'Erro ao consultar verificação.' });
+    }
+    return;
+  }
+
+  // As duas fotos vão em chamadas separadas (cada uma até ~500 KB) por causa do limite de 1 MB por chamada.
+  if (req.method === 'POST' && route === '/identity/image') {
+    if (!checkRateLimit(req, res, 'identity:image', 20, 3600000)) return;
+    try {
+      const body = await parseJsonBody<{ kind?: string; image?: string }>(req);
+      const kind = body.kind === 'document' || body.kind === 'selfie' ? body.kind : null;
+      const image = parseImageDataUrl(body.image);
+      if (!kind || !image) {
+        sendJson(res, 400, { error: 'Envie uma foto JPG/PNG nítida (tipo "document" ou "selfie").' });
+        return;
+      }
+      const current = await getIdentityCheck(user.uid);
+      if (current?.status === 'approved') {
+        sendJson(res, 409, { error: 'Sua identidade já está aprovada.' });
+        return;
+      }
+      if (current?.status === 'manual_review' || current?.status === 'pending') {
+        sendJson(res, 409, { error: 'Sua verificação já está em análise. Aguarde o resultado.' });
+        return;
+      }
+      const nowIso = new Date().toISOString();
+      await adminDb.collection('kyc_images').doc(`${user.uid}_${kind}`).set({
+        uid: user.uid,
+        kind,
+        mimeType: image.mimeType,
+        data: image.data,
+        createdAt: nowIso,
+      });
+      await adminDb
+        .collection('identity_checks')
+        .doc(user.uid)
+        .set(
+          {
+            uid: user.uid,
+            userId: user.id,
+            email: user.email,
+            status: current?.status && current.status !== 'rejected' ? current.status : 'none',
+            [kind === 'document' ? 'hasDocumentImage' : 'hasSelfieImage']: true,
+            updatedAt: nowIso,
+          },
+          { merge: true }
+        );
+      sendJson(res, 200, { ok: true, kind });
+    } catch (error) {
+      console.error('POST /api/identity/image error:', error);
+      sendJson(res, 500, { error: 'Erro ao salvar a foto.' });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && route === '/identity/submit') {
+    if (!checkRateLimit(req, res, 'identity:submit', 6, 3600000)) return;
+    try {
+      if (auth.authUser.email_verified !== true) {
+        sendJson(res, 403, { error: 'Confirme seu e-mail antes de enviar a verificação.', code: 'EMAIL_NOT_VERIFIED' });
+        return;
+      }
+      const body = await parseJsonBody<{ fullName?: string; cpf?: string; birthDate?: string }>(req);
+      const fullName = String(body.fullName ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      const cpf = normalizeCpf(body.cpf);
+      const birthDate = String(body.birthDate ?? '').trim();
+      if (fullName.split(' ').filter(Boolean).length < 2) {
+        sendJson(res, 400, { error: 'Informe o nome completo, igual ao documento.' });
+        return;
+      }
+      if (!isValidCpf(cpf)) {
+        sendJson(res, 400, { error: 'CPF inválido. Confira os números.' });
+        return;
+      }
+      const birth = Date.parse(birthDate);
+      const age = (Date.now() - birth) / (365.25 * 86400000);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate) || !Number.isFinite(birth) || age < 18 || age > 120) {
+        sendJson(res, 400, { error: 'Data de nascimento inválida (é preciso ter 18 anos ou mais).' });
+        return;
+      }
+
+      const current = await getIdentityCheck(user.uid);
+      if (current?.status === 'approved') {
+        sendJson(res, 409, { error: 'Sua identidade já está aprovada.' });
+        return;
+      }
+      if (current?.status === 'manual_review') {
+        sendJson(res, 409, { error: 'Sua verificação já está em análise. Aguarde o resultado.' });
+        return;
+      }
+      const attempts = Number((current as (IdentityCheckDoc & { attempts?: number }) | null)?.attempts ?? 0);
+      if (attempts >= 5) {
+        sendJson(res, 429, { error: 'Muitas tentativas. Sua verificação foi enviada para análise da equipe.' });
+        return;
+      }
+
+      const [docSnap, selfieSnap] = await Promise.all([
+        adminDb.collection('kyc_images').doc(`${user.uid}_document`).get(),
+        adminDb.collection('kyc_images').doc(`${user.uid}_selfie`).get(),
+      ]);
+      if (!docSnap.exists || !selfieSnap.exists) {
+        sendJson(res, 400, { error: 'Envie a foto do documento e a selfie antes de concluir.' });
+        return;
+      }
+
+      // CPF único: um CPF só pode pertencer a uma conta.
+      const hash = cpfHash(cpf);
+      const indexRef = adminDb.collection('cpf_index').doc(hash);
+      const owner = await adminDb.runTransaction(async (tx) => {
+        const snap = await tx.get(indexRef);
+        if (snap.exists && snap.data()?.uid !== user.uid) return String(snap.data()?.uid);
+        if (!snap.exists) tx.set(indexRef, { uid: user.uid, createdAt: new Date().toISOString() });
+        return user.uid;
+      });
+      if (owner !== user.uid) {
+        await recordAuditLog({
+          actorUserId: user.id,
+          actorEmail: user.email,
+          action: 'IDENTITY_CPF_ALREADY_USED',
+          entityType: 'identity_check',
+          entityId: user.uid,
+          details: { cpfMasked: maskCpf(cpf) },
+        });
+        sendJson(res, 409, {
+          error: 'Este CPF já está cadastrado em outra conta. Se for seu, fale com o suporte.',
+          code: 'CPF_IN_USE',
+        });
+        return;
+      }
+      // Se a pessoa trocou de CPF, libera o anterior.
+      if (current?.cpfHash && current.cpfHash !== hash) {
+        const old = await adminDb.collection('cpf_index').doc(current.cpfHash).get();
+        if (old.exists && old.data()?.uid === user.uid) await old.ref.delete();
+      }
+
+      const nowIso = new Date().toISOString();
+      await adminDb.collection('identity_checks').doc(user.uid).set(
+        {
+          uid: user.uid,
+          userId: user.id,
+          email: user.email,
+          status: 'pending',
+          fullName,
+          cpfMasked: maskCpf(cpf),
+          cpfHash: hash,
+          birthDate,
+          hasDocumentImage: true,
+          hasSelfieImage: true,
+          submittedAt: nowIso,
+          updatedAt: nowIso,
+          attempts: attempts + 1,
+        },
+        { merge: true }
+      );
+
+      // Agente de Segurança analisa as fotos com a IA e decide.
+      let decision = { status: 'manual_review' as string, reason: '' };
+      let aiResult: Awaited<ReturnType<typeof analyzeIdentityWithAI>> = null;
+      await dispatchAgentTask({
+        department: 'Segurança e Auditoria',
+        triggerType: 'event',
+        eventName: 'IDENTITY_VERIFICATION',
+        title: `Verificar identidade de ${maskCpf(cpf)}`,
+        input: { uid: user.uid, cpfMasked: maskCpf(cpf) },
+        executor: async () => {
+          const d = docSnap.data() as { mimeType: string; data: string };
+          const s = selfieSnap.data() as { mimeType: string; data: string };
+          aiResult = await analyzeIdentityWithAI({
+            fullName,
+            cpf,
+            birthDate,
+            documentImage: { mimeType: d.mimeType, data: d.data },
+            selfieImage: { mimeType: s.mimeType, data: s.data },
+          });
+          decision = decideIdentity({ ai: aiResult, typedName: fullName, typedCpf: cpf });
+          return `${decision.status}: ${decision.reason}`;
+        },
+      });
+      if (!decision.reason) {
+        decision = { status: 'manual_review', reason: 'Análise automática indisponível; revisão humana.' };
+      }
+
+      const decidedAt = new Date().toISOString();
+      await adminDb.collection('identity_checks').doc(user.uid).set(
+        {
+          status: decision.status,
+          reason: decision.reason,
+          aiResult,
+          reviewedByEmail: decision.status === 'manual_review' ? null : 'ia',
+          decidedAt,
+          updatedAt: decidedAt,
+        },
+        { merge: true }
+      );
+      if (decision.status === 'rejected') {
+        // Reprovado: o CPF não fica preso a esta conta.
+        const idx = await indexRef.get();
+        if (idx.exists && idx.data()?.uid === user.uid) await indexRef.delete();
+      }
+      await recordAuditLog({
+        actorUserId: user.id,
+        actorEmail: user.email,
+        action: 'IDENTITY_DECIDED',
+        entityType: 'identity_check',
+        entityId: user.uid,
+        details: { status: decision.status, cpfMasked: maskCpf(cpf) },
+      });
+
+      sendJson(res, 200, { identity: publicIdentityStatus(await getIdentityCheck(user.uid)) });
+    } catch (error) {
+      console.error('POST /api/identity/submit error:', error);
+      sendJson(res, 500, { error: 'Erro ao processar a verificação.' });
     }
     return;
   }
@@ -236,12 +480,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   if (req.method === 'GET' && route === '/tourist/hub') {
     try {
-      const [docsSnap, ordersSnap, alertsSnap, notifsSnap, couponsSnap] = await Promise.all([
+      const [docsSnap, ordersSnap, alertsSnap, notifsSnap] = await Promise.all([
         adminDb.collection('tourist_documents').where('numericUserId', '==', user.id).get(),
         adminDb.collection('flight_orders').where('userId', '==', user.id).get(),
         adminDb.collection('flight_alerts').where('numericUserId', '==', user.id).get(),
         adminDb.collection('notifications').where('numericUserId', '==', user.id).get(),
-        adminDb.collection('coupons').where('active', '==', true).get(),
       ]);
 
       const sortDesc = (arr: Array<Record<string, unknown>>) =>
@@ -252,7 +495,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         flightOrders: sortDesc(ordersSnap.docs.map((d) => d.data() as Record<string, unknown>)),
         flightAlerts: sortDesc(alertsSnap.docs.map((d) => d.data() as Record<string, unknown>)),
         notifications: sortDesc(notifsSnap.docs.map((d) => d.data() as Record<string, unknown>)).slice(0, 40),
-        coupons: couponsSnap.docs.map((d) => d.data()),
       });
     } catch (error) {
       console.error('GET /api/tourist/hub error:', error);
@@ -458,7 +700,17 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         createdAt: new Date().toISOString(),
       };
       await adminDb.collection('reviews').doc(String(id)).set(created);
-      sendJson(res, 201, { review: created });
+      try {
+        await agentModerateReview(id, cleanComment);
+      } catch (modErr) {
+        console.error('review moderation failed:', modErr);
+      }
+      const after = await adminDb.collection('reviews').doc(String(id)).get();
+      const hidden = after.data()?.hidden === true;
+      sendJson(res, 201, {
+        review: { ...created, hidden },
+        message: hidden ? 'Sua avaliação ficou em análise por não seguir as regras da comunidade.' : undefined,
+      });
     } catch (error) {
       console.error('POST /api/reviews error:', error);
       sendJson(res, 500, { error: 'Erro ao salvar avaliação.' });
