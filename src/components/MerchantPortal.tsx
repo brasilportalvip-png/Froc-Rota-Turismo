@@ -367,19 +367,6 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
     }
   };
 
-  const handleVerifySubscriptionSandbox = async (subscriptionId: number) => {
-    try {
-      await apiFetch('/api/merchant/plans/verify-server', {
-        method: 'POST',
-        body: JSON.stringify({ subscriptionId }),
-      });
-      notify('Assinatura verificada no servidor e ativada!', 'success');
-      await loadPortal();
-    } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'Falha na confirmação.', 'error');
-    }
-  };
-
   const handleGenerateAiCopy = async () => {
     if (!campListingId) {
       notify('Selecione um anúncio primeiro.', 'error');
@@ -1018,13 +1005,9 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                             · Status: <strong>{subscription.status}</strong>
                           </div>
                           {subscription.status === 'pending_payment' && (
-                            <button
-                              type="button"
-                              onClick={() => handleVerifySubscriptionSandbox(subscription.id)}
-                              className="px-3 py-1.5 rounded-lg bg-[#D9A441] text-[#111111] font-semibold"
-                            >
-                              Verificar Pagamento no Servidor
-                            </button>
+                            <span className="px-3 py-1 rounded-lg bg-[#FFD700]/25 text-[#111111] font-semibold">
+                              Ativação automática após webhook do Mercado Pago
+                            </span>
                           )}
                         </div>
                       ))

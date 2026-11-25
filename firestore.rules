@@ -34,10 +34,12 @@ service cloud.firestore {
       return isVerifiedUser() && request.auth.token.email == 'brasilportalvip@gmail.com';
     }
 
+    // Uses Firebase Custom Claim `frocAdmin: true` (synced by server on verified admin/subadmin auth)
+    // so list rules never perform costly get()/exists() lookups.
     function isAdmin() {
       return isMasterAdminEmail() || (
         isVerifiedUser() &&
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        request.auth.token.frocAdmin == true
       );
     }
 
@@ -190,13 +192,157 @@ service cloud.firestore {
     }
 
     // ========================
-    // COLLECTIONS
+    // PUBLIC & SERVER-MANAGED MARKETPLACE COLLECTIONS
     // ========================
     match /test/{docId} {
       allow get: if isValidId(docId);
       allow list, write: if false;
     }
 
+    match /destinations/{destinationId} {
+      allow get, list: if true;
+      allow write: if false;
+    }
+
+    match /listings/{listingId} {
+      allow get: if isValidId(listingId) && (resource.data.status == 'active' || isAdmin());
+      allow list: if resource.data.status == 'active' || isAdmin();
+      allow write: if false;
+    }
+
+    match /availability_slots/{slotId} {
+      allow get, list: if true;
+      allow write: if false;
+    }
+
+    match /merchant_plans/{planId} {
+      allow get, list: if true;
+      allow write: if false;
+    }
+
+    match /popup_templates/{popupId} {
+      allow get: if isValidId(popupId) && (resource.data.active == true || isAdmin());
+      allow list: if resource.data.active == true || isAdmin();
+      allow write: if false;
+    }
+
+    match /reviews/{reviewId} {
+      allow get, list: if true;
+      allow write: if false;
+    }
+
+    match /merchants/{merchantId} {
+      allow get: if isValidId(merchantId) && (
+        resource.data.verificationStatus == 'verified' ||
+        (isVerifiedUser() && resource.data.userUid == request.auth.uid) ||
+        isAdmin()
+      );
+      allow list: if resource.data.verificationStatus == 'verified' ||
+        (isVerifiedUser() && resource.data.userUid == request.auth.uid) ||
+        isAdmin();
+      allow write: if false;
+    }
+
+    match /bookings/{bookingId} {
+      allow get: if isValidId(bookingId) && ((isVerifiedUser() && resource.data.userUid == request.auth.uid) || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.userUid == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
+    match /flight_orders/{orderId} {
+      allow get: if isValidId(orderId) && ((isVerifiedUser() && resource.data.userUid == request.auth.uid) || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.userUid == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
+    match /merchant_subscriptions/{subId} {
+      allow get: if isValidId(subId) && isAdmin();
+      allow list: if isAdmin() && resource.data.status is string;
+      allow write: if false;
+    }
+
+    match /favorites/{favId} {
+      allow get: if isValidId(favId) && ((isVerifiedUser() && resource.data.userUid == request.auth.uid) || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.userUid == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
+    match /saved_itineraries/{itinId} {
+      allow get: if isValidId(itinId) && ((isVerifiedUser() && resource.data.userUid == request.auth.uid) || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.userUid == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
+    match /concierge_requests/{reqId} {
+      allow get: if isValidId(reqId) && ((isVerifiedUser() && resource.data.userUid == request.auth.uid) || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.userUid == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
+    match /reports/{reportId} {
+      allow get: if isValidId(reportId) && isAdmin();
+      allow list: if isAdmin() && resource.data.status is string;
+      allow write: if false;
+    }
+
+    match /coupons/{couponId} {
+      allow get: if isValidId(couponId) && isAdmin();
+      allow list: if isAdmin() && resource.data.code is string;
+      allow write: if false;
+    }
+
+    match /pricing_rules/{ruleId} {
+      allow get: if isValidId(ruleId) && isAdmin();
+      allow list: if isAdmin() && resource.data.ruleCode is string;
+      allow write: if false;
+    }
+
+    match /financial_ledger/{entryId} {
+      allow get: if isValidId(entryId) && isAdmin();
+      allow list: if isAdmin() && resource.data.referenceCode is string;
+      allow write: if false;
+    }
+
+    match /agent_tasks/{taskId} {
+      allow get: if isValidId(taskId) && isAdmin();
+      allow list: if isAdmin() && resource.data.agentCode is string;
+      allow write: if false;
+    }
+
+    match /audit_logs/{logId} {
+      allow get: if isValidId(logId) && isAdmin();
+      allow list: if isAdmin() && resource.data.action is string;
+      allow write: if false;
+    }
+
+    // Strictly Server-Only Sensitive Collections (Admin SDK bypasses security rules)
+    match /admin_permissions/{docId} {
+      allow read, write: if false;
+    }
+
+    match /payments/{docId} {
+      allow read, write: if false;
+    }
+
+    match /idempotency_keys/{docId} {
+      allow read, write: if false;
+    }
+
+    match /oauth_connections/{docId} {
+      allow read, write: if false;
+    }
+
+    match /_counters/{docId} {
+      allow read, write: if false;
+    }
+
+    match /_meta/{docId} {
+      allow read, write: if false;
+    }
+
+    // ========================
+    // IDENTITY, CHAT & EIGHT-PILLAR COLLECTIONS
+    // ========================
     match /admins/{adminUid} {
       allow get: if isValidId(adminUid) && (isMasterAdminEmail() || (isVerifiedUser() && request.auth.uid == adminUid));
       allow list: if isMasterAdminEmail() && resource.data.uid is string;
@@ -253,7 +399,7 @@ service cloud.firestore {
 
     match /tourist_documents/{docId} {
       allow get: if isValidId(docId) && ((isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isMasterAdminEmail());
+      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
       allow create: if isValidId(docId) &&
         isVerifiedUser() &&
         isValidTouristDocument(incoming()) &&
@@ -276,7 +422,7 @@ service cloud.firestore {
 
     match /flight_alerts/{alertId} {
       allow get: if isValidId(alertId) && ((isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isMasterAdminEmail());
+      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
       allow create: if isValidId(alertId) &&
         isVerifiedUser() &&
         isValidFlightAlert(incoming()) &&
@@ -299,7 +445,7 @@ service cloud.firestore {
 
     match /conversations/{conversationId} {
       allow get: if isValidId(conversationId) && ((isVerifiedUser() && resource.data.ownerUid == request.auth.uid) || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isMasterAdminEmail());
+      allow list: if isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isAdmin());
       allow create: if isValidId(conversationId) &&
         isVerifiedUser() &&
         isValidConversation(incoming()) &&
@@ -332,7 +478,7 @@ service cloud.firestore {
           )
         );
         allow list: if isVerifiedUser() && (
-          resource.data.conversationOwnerUid == request.auth.uid || isMasterAdminEmail()
+          resource.data.conversationOwnerUid == request.auth.uid || isAdmin()
         );
         allow create: if isValidId(conversationId) && isValidId(messageId) &&
           isVerifiedUser() &&
@@ -357,7 +503,7 @@ service cloud.firestore {
 
     match /notifications/{notificationId} {
       allow get: if isValidId(notificationId) && ((isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isMasterAdminEmail());
+      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
       allow create: if isValidId(notificationId) &&
         isVerifiedUser() &&
         isValidNotification(incoming()) &&
@@ -384,7 +530,7 @@ service cloud.firestore {
 
     match /campaigns/{campaignId} {
       allow get: if isValidId(campaignId) && ((isVerifiedUser() && resource.data.ownerUid == request.auth.uid) || isAdmin());
-      allow list: if isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isMasterAdminEmail());
+      allow list: if isVerifiedUser() && (resource.data.ownerUid == request.auth.uid || isAdmin());
       allow create: if isValidId(campaignId) &&
         isVerifiedUser() &&
         isValidCampaign(incoming()) &&
@@ -411,7 +557,7 @@ service cloud.firestore {
 
     match /posts/{postId} {
       allow get: if isValidId(postId) && (resource.data.status == 'published' || isAdmin());
-      allow list: if resource.data.status == 'published' || isMasterAdminEmail();
+      allow list: if resource.data.status == 'published' || isAdmin();
       allow create: if isValidId(postId) &&
         isAdmin() &&
         isValidEditorialPost(incoming()) &&
@@ -428,7 +574,7 @@ service cloud.firestore {
 
     match /agents/{agentId} {
       allow get: if isValidId(agentId) && isAdmin();
-      allow list: if isMasterAdminEmail() && resource.data.code is string;
+      allow list: if isAdmin() && resource.data.code is string;
       allow create: if isValidId(agentId) &&
         isAdmin() &&
         isValidAgent(incoming()) &&

@@ -25,7 +25,7 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
   defaultChannel = 'tourist',
   initialSubject = '',
 }) => {
-  const { apiFetch, dbUser, firebaseUser, isAnyAdmin, lastRealtimeEvent, loginWithGoogle, notify } =
+  const { apiFetch, dbUser, firebaseUser, isAnyAdmin, loginWithGoogle, notify } =
     useApp();
 
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
@@ -41,6 +41,14 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
   const [askAi, setAskAi] = useState(true);
   const [sending, setSending] = useState(false);
   const [firestoreLiveCount, setFirestoreLiveCount] = useState<number | null>(null);
+
+  const toIso = (val: unknown): string => {
+    if (typeof val === 'object' && val !== null && 'toDate' in val) {
+      const fn = (val as { toDate?: () => Date }).toDate;
+      if (typeof fn === 'function') return fn.call(val).toISOString();
+    }
+    return String(val || '');
+  };
 
   const loadConversations = useCallback(async () => {
     if (!dbUser) return;
@@ -87,18 +95,7 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
     }
   }, [selectedConv?.id, loadMessages]);
 
-  // WebSocket live event handler
-  useEffect(() => {
-    if (!lastRealtimeEvent || lastRealtimeEvent.type !== 'chat:message') return;
-    // O aviso do WebSocket traz só o id da conversa (sem o texto): busca as mensagens pela API autenticada.
-    const payload = lastRealtimeEvent.data as { conversationId?: number };
-    if (payload?.conversationId && payload.conversationId === selectedConv?.id) {
-      loadMessages(selectedConv.id);
-    }
-    loadConversations();
-  }, [lastRealtimeEvent, selectedConv?.id, loadConversations, loadMessages]);
-
-  // Firestore real-time mirror listener scoped to authenticated ownerUid
+  // Firestore real-time listener on conversations scoped strictly to ownerUid or verified admin
   useEffect(() => {
     if (!firebaseUser?.uid || !firebaseUser.emailVerified) return;
     const convPath = 'conversations';
@@ -110,9 +107,40 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
       q,
       (snap) => {
         setFirestoreLiveCount(snap.size);
+        const searchLower = searchTerm.trim().toLowerCase();
+        const mapped: ChatConversation[] = snap.docs
+          .map((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            return {
+              id: Number(raw.id || d.id),
+              conversationCode: String(raw.conversationCode || ''),
+              ownerUserId: Number(raw.ownerUserId || 0),
+              ownerUid: String(raw.ownerUid || ''),
+              ownerName: String(raw.ownerName || ''),
+              channel: (raw.channel as ChatConversation['channel']) || 'tourist',
+              subject: String(raw.subject || ''),
+              status: (raw.status as ChatConversation['status']) || 'open',
+              unreadByOwner: Number(raw.unreadByOwner || 0),
+              unreadByStaff: Number(raw.unreadByStaff || 0),
+              lastMessageAt: toIso(raw.lastMessageAt || raw.updatedAt || raw.createdAt),
+            };
+          })
+          .filter((c) =>
+            searchLower
+              ? c.subject.toLowerCase().includes(searchLower) ||
+                c.ownerName.toLowerCase().includes(searchLower) ||
+                c.conversationCode.toLowerCase().includes(searchLower)
+              : true
+          )
+          .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+
+        setConversations(mapped);
+        setSelectedConv((prev) => {
+          if (!prev) return mapped[0] || null;
+          return mapped.find((c) => c.id === prev.id) || prev;
+        });
       },
       (err) => {
-        // Only handle fatal permission errors via structured handler when user holds a verified email
         console.warn('Firestore chat snapshot warning:', err.message);
         if (err.message.includes('insufficient permissions')) {
           handleFirestoreError(err, OperationType.LIST, convPath);
@@ -120,7 +148,53 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
       }
     );
     return () => unsub();
-  }, [firebaseUser?.uid, firebaseUser?.emailVerified, isAnyAdmin]);
+  }, [firebaseUser?.uid, firebaseUser?.emailVerified, isAnyAdmin, searchTerm]);
+
+  // Firestore real-time listener on messages subcollection of the active thread
+  useEffect(() => {
+    if (!firebaseUser?.uid || !firebaseUser.emailVerified || !selectedConv?.id) return;
+    if (!isAnyAdmin && selectedConv.ownerUid !== firebaseUser.uid) return;
+
+    const msgsPath = `conversations/${String(selectedConv.id)}/messages`;
+    const msgQuery = isAnyAdmin
+      ? query(collection(firestoreDb, msgsPath))
+      : query(
+          collection(firestoreDb, msgsPath),
+          where('conversationOwnerUid', '==', firebaseUser.uid)
+        );
+
+    const unsub = onSnapshot(
+      msgQuery,
+      (snap) => {
+        const mapped: ChatMessage[] = snap.docs
+          .map((d) => {
+            const raw = d.data() as Record<string, unknown>;
+            return {
+              id: Number(raw.id || d.id),
+              conversationId: Number(raw.conversationId || selectedConv.id),
+              senderUid: String(raw.senderUid || ''),
+              senderName: String(raw.senderName || ''),
+              senderRole: (raw.senderRole as ChatMessage['senderRole']) || 'tourist',
+              text: String(raw.text || ''),
+              attachmentUrl: raw.attachmentUrl ? String(raw.attachmentUrl) : null,
+              readByStaff: Boolean(raw.readByStaff),
+              createdAt: toIso(raw.createdAt),
+            };
+          })
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+        setMessages(mapped);
+      },
+      (err) => {
+        console.warn('Firestore messages snapshot warning:', err.message);
+        if (err.message.includes('insufficient permissions')) {
+          handleFirestoreError(err, OperationType.LIST, msgsPath);
+        }
+      }
+    );
+
+    return () => unsub();
+  }, [firebaseUser?.uid, firebaseUser?.emailVerified, isAnyAdmin, selectedConv?.id, selectedConv?.ownerUid]);
 
   const handleCreateConversation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,7 +213,9 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
         }),
       });
       setNewSubject('');
-      setConversations((prev) => [res.conversation, ...prev]);
+      setConversations((prev) =>
+        prev.some((c) => c.id === res.conversation.id) ? prev : [res.conversation, ...prev]
+      );
       setSelectedConv(res.conversation);
       notify('Nova conversa em tempo real iniciada.', 'success');
     } catch (err: unknown) {
@@ -195,7 +271,7 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
       <div className="w-full max-w-5xl h-[85vh] bg-[#FFFFFF] rounded-2xl border-2 border-[#111111] shadow-2xl flex flex-col overflow-hidden froc-animate-modal">
         <FuturisticModalHeader
           title="Central de Chat em Tempo Real"
-          subtitle={`WebSocket + Cloud Firestore · Froc Rota AI & Equipe Humana${
+          subtitle={`Cloud Firestore em Tempo Real · Froc Rota AI & Equipe Humana${
             firestoreLiveCount !== null ? ' · Sync ativo' : ''
           }`}
           icon={<MessageSquare className="w-5 h-5" />}

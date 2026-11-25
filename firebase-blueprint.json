@@ -2,20 +2,22 @@
   "entities": {
     "UserPublicProfile": {
       "title": "UserPublicProfile",
-      "description": "Public safe user profile in Firestore without PII",
+      "description": "Public safe user profile in Firestore",
       "type": "object",
       "properties": {
+        "id": { "type": "number" },
         "uid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
         "role": { "type": "string", "enum": ["tourist", "merchant", "concierge", "admin", "subadmin"] },
         "preferredLang": { "type": "string", "enum": ["pt", "en", "es"] },
+        "preferredCurrency": { "type": "string", "enum": ["BRL", "USD", "EUR"] },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "displayName", "role", "preferredLang", "updatedAt"]
     },
     "UserPrivateInfo": {
       "title": "UserPrivateInfo",
-      "description": "PII-isolated private user metadata accessible only to owner or admin",
+      "description": "PII-isolated private user metadata accessible only to owner or verified admin",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
@@ -163,12 +165,28 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "code", "name", "department", "state", "updatedAt"]
+    },
+    "BookingRecord": {
+      "title": "BookingRecord",
+      "description": "Server-managed marketplace booking settled exclusively by signed Mercado Pago webhook",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "bookingCode": { "type": "string", "maxLength": 40 },
+        "userId": { "type": "number" },
+        "userUid": { "type": "string", "maxLength": 128 },
+        "listingId": { "type": "number" },
+        "grossAmountCents": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending_payment", "confirmed", "cancelled", "refunded"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "bookingCode", "userId", "userUid", "listingId", "grossAmountCents", "status", "createdAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserPublicProfile" },
-      "description": "Public profile metadata without PII"
+      "description": "User profiles managed by server API and readable by owner/admin"
     },
     "/users/{userId}/private/{docId}": {
       "schema": { "$ref": "#/entities/UserPrivateInfo" },
@@ -178,17 +196,69 @@
       "schema": "object",
       "description": "Master and delegated administrator permission map"
     },
-    "/tourist_documents/{docId}": {
-      "schema": { "$ref": "#/entities/TouristDocument" },
-      "description": "Owner-scoped tourist travel documents and vouchers"
+    "/admin_permissions/{emailKey}": {
+      "schema": "object",
+      "description": "Server-only RBAC permissions matrix for delegated sub-administrators"
+    },
+    "/destinations/{destinationId}": {
+      "schema": "object",
+      "description": "Public Brazilian and international tourism destinations catalog"
+    },
+    "/listings/{listingId}": {
+      "schema": "object",
+      "description": "Marketplace experiences, gastronomy, and accommodations"
+    },
+    "/availability_slots/{slotId}": {
+      "schema": "object",
+      "description": "Real-time inventory and time slots for listings"
+    },
+    "/merchant_plans/{planId}": {
+      "schema": "object",
+      "description": "Commercial advertiser plans (Gratuito, Anúncio Básico R$ 100/30d, Profissional, Premium)"
+    },
+    "/merchants/{merchantId}": {
+      "schema": "object",
+      "description": "Verified merchant partner accounts"
+    },
+    "/merchant_subscriptions/{subscriptionId}": {
+      "schema": "object",
+      "description": "Merchant plan subscriptions activated by Mercado Pago webhook or courtesy"
+    },
+    "/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/BookingRecord" },
+      "description": "Marketplace reservations settled exclusively by signed Mercado Pago webhooks"
+    },
+    "/payments/{paymentId}": {
+      "schema": "object",
+      "description": "Server-only payment and webhook reconciliation records"
+    },
+    "/pricing_rules/{ruleId}": {
+      "schema": "object",
+      "description": "Configurable financial engine markup and fee rules"
+    },
+    "/financial_ledger/{entryId}": {
+      "schema": "object",
+      "description": "Server-only immutable financial ledger entries"
+    },
+    "/coupons/{couponId}": {
+      "schema": "object",
+      "description": "Promotional discount coupons managed by Admin and validated server-side"
+    },
+    "/flight_orders/{orderId}": {
+      "schema": "object",
+      "description": "Server-authoritative airfare orders"
     },
     "/flight_alerts/{alertId}": {
       "schema": { "$ref": "#/entities/FlightAlert" },
       "description": "Owner-scoped price drop alerts for flight radar"
     },
+    "/tourist_documents/{docId}": {
+      "schema": { "$ref": "#/entities/TouristDocument" },
+      "description": "Owner-scoped tourist travel documents and vouchers"
+    },
     "/conversations/{conversationId}": {
       "schema": { "$ref": "#/entities/Conversation" },
-      "description": "Real-time chat threads for tourists, merchants, and staff"
+      "description": "Real-time chat threads for tourists, merchants, and verified staff"
     },
     "/conversations/{conversationId}/messages/{messageId}": {
       "schema": { "$ref": "#/entities/ConversationMessage" },
@@ -198,6 +268,26 @@
       "schema": { "$ref": "#/entities/NotificationItem" },
       "description": "User-scoped real-time notifications"
     },
+    "/reviews/{reviewId}": {
+      "schema": "object",
+      "description": "Verified tourist reviews and merchant replies"
+    },
+    "/favorites/{favoriteId}": {
+      "schema": "object",
+      "description": "Owner-scoped destination and listing favorites"
+    },
+    "/saved_itineraries/{itineraryId}": {
+      "schema": "object",
+      "description": "Owner-scoped saved travel itineraries"
+    },
+    "/concierge_requests/{requestId}": {
+      "schema": "object",
+      "description": "Bespoke trip concierge requests"
+    },
+    "/reports/{reportId}": {
+      "schema": "object",
+      "description": "Moderation and safety reports"
+    },
     "/campaigns/{campaignId}": {
       "schema": { "$ref": "#/entities/MerchantCampaign" },
       "description": "Advertiser marketing campaigns synced with portal"
@@ -206,9 +296,37 @@
       "schema": { "$ref": "#/entities/EditorialPost" },
       "description": "Daily editorial posts (5 posts/day with deduplication)"
     },
+    "/popup_templates/{popupId}": {
+      "schema": "object",
+      "description": "54 promotional pop-up templates managed by Admin/Editorial"
+    },
     "/agents/{agentId}": {
       "schema": { "$ref": "#/entities/AgentRecord" },
       "description": "200 specialized agent status records monitored by Admin Master"
+    },
+    "/agent_tasks/{taskId}": {
+      "schema": "object",
+      "description": "Orchestrator task execution and financial lock audit trail"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "object",
+      "description": "Server-only security and governance audit logs"
+    },
+    "/idempotency_keys/{keyId}": {
+      "schema": "object",
+      "description": "Server-only payment and order idempotency locks"
+    },
+    "/oauth_connections/{connId}": {
+      "schema": "object",
+      "description": "Server-only OAuth tokens for Google Business and Mercado Pago Seller"
+    },
+    "/_counters/{counterId}": {
+      "schema": "object",
+      "description": "Server-only atomic numeric ID sequence counters"
+    },
+    "/_meta/{metaId}": {
+      "schema": "object",
+      "description": "Server-only bootstrap/seed state lock"
     },
     "/test/{docId}": {
       "schema": "object",

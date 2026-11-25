@@ -3,35 +3,35 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import express from 'express';
-import http from 'node:http';
 import {
   calculateCommissionSplit,
   getPaymentGatewayStatus,
   verifyMercadoPagoWebhookSignature,
-} from '../src/services/payment.service.ts';
-import { computePriceFromRule } from '../src/services/pricing.service.ts';
+} from '../api/_lib/payment.ts';
+import { computePriceFromRule } from '../api/_lib/pricing.ts';
 import {
   AGENT_DEPARTMENTS,
-  dispatchAgentTask,
-} from '../src/services/agents.service.ts';
+  requiresHumanFinancialApproval,
+} from '../api/_lib/agents.ts';
 import {
   computeEditorialHash,
   textSimilarityRatio,
-} from '../src/services/editorial.service.ts';
+} from '../api/_lib/editorial.ts';
 import {
   signOAuthState,
   verifyOAuthState,
-} from '../src/services/oauth.service.ts';
+} from '../api/_lib/oauth.ts';
 import { formatMoney } from '../src/i18n/translations.ts';
-import { getTravelIntegrationsStatus, searchLiveFlightsIfConfigured } from '../src/services/travel.service.ts';
 import {
-  AuthRequest,
-  requireAdmin,
-  requireAdminPermission,
-  requireAuth,
-} from '../src/middleware/auth.ts';
-import { POPUP_CATEGORIES, READY_POPUP_MODELS } from '../src/services/popups.service.ts';
+  getTravelIntegrationsStatus,
+  searchLiveFlightsIfConfigured,
+} from '../api/_lib/travel.ts';
+import {
+  hasAdminPermission,
+  isVerifiedAdminIdentity,
+} from '../api/_lib/auth.ts';
+import { isExactApprovedPendingPayment } from '../api/webhooks/mercadopago.ts';
+import { POPUP_CATEGORIES, READY_POPUP_MODELS } from '../api/_lib/popups.ts';
 import { evaluatePasswordStrength } from '../src/components/DesignSystem.tsx';
 import {
   getRandomPopupIntervalMs,
@@ -67,12 +67,12 @@ test('calculateCommissionSplit prevents negative merchant payout on 100% discoun
 
 test('Pricing Engine applies configurable rules: flights R$1000+R$200=R$1200 and accommodation R$100+R$50=R$150', () => {
   const flightBreakdown = computePriceFromRule({
-    supplierCostCents: 100000, // R$ 1.000
+    supplierCostCents: 100000,
     rule: {
       ruleCode: 'FLT-FIX-200',
       name: 'Remuneração Fixa Passagens Aéreas',
       markupType: 'fixed',
-      markupFixedCents: 20000, // R$ 200
+      markupFixedCents: 20000,
       markupBps: 0,
       gatewayFeeBps: 399,
       taxBps: 600,
@@ -84,12 +84,12 @@ test('Pricing Engine applies configurable rules: flights R$1000+R$200=R$1200 and
   assert.equal(flightBreakdown.finalClientCents, 120000);
 
   const stayBreakdown = computePriceFromRule({
-    supplierCostCents: 10000, // R$ 100
+    supplierCostCents: 10000,
     rule: {
       ruleCode: 'HTL-FIX-50',
       name: 'Remuneração Fixa Hospedagem',
       markupType: 'fixed',
-      markupFixedCents: 5000, // R$ 50
+      markupFixedCents: 5000,
       markupBps: 0,
       gatewayFeeBps: 399,
       taxBps: 600,
@@ -105,16 +105,16 @@ test('Pricing Engine enforces contractual markup cap guard', () => {
   assert.throws(
     () =>
       computePriceFromRule({
-        supplierCostCents: 10000, // R$ 100
+        supplierCostCents: 10000,
         rule: {
           ruleCode: 'CAP-TEST',
           name: 'Cap Guard',
           markupType: 'fixed',
-          markupFixedCents: 9000, // 90% markup
+          markupFixedCents: 9000,
           markupBps: 0,
           gatewayFeeBps: 399,
           taxBps: 600,
-          maxFinalMarkupRatioBps: 5000, // max 50% allowed
+          maxFinalMarkupRatioBps: 5000,
         },
       }),
     /CONTRACTUAL_PRICE_CAP_EXCEEDED/
@@ -127,18 +127,11 @@ test('200 AI Agents architecture sums strictly to 200 specialists across 12 depa
   assert.equal(totalQuota, 200);
 });
 
-test('200 AI Agents financial approval lock blocks unapproved sensitive financial actions', async () => {
-  const task = await dispatchAgentTask({
-    department: 'Voos e Oportunidades',
-    triggerType: 'request',
-    eventName: 'TEST_UNAPPROVED_FLIGHT_ISSUE',
-    title: 'Teste trava emissão aérea sem aprovação',
-    requestedAction: 'issue_flight_ticket',
-    explicitApproval: false,
-  });
-
-  assert.ok(task);
-  assert.equal(task.status, 'awaiting_approval');
+test('200 AI Agents financial approval lock blocks unapproved sensitive financial actions', () => {
+  assert.equal(requiresHumanFinancialApproval('issue_flight_ticket', false), true);
+  assert.equal(requiresHumanFinancialApproval('execute_payment', false), true);
+  assert.equal(requiresHumanFinancialApproval('issue_flight_ticket', true), false);
+  assert.equal(requiresHumanFinancialApproval('analyze_radar', false), false);
 });
 
 test('Editorial anti-duplication detects identical content hashes and high topic similarity', () => {
@@ -214,6 +207,48 @@ test('verifyMercadoPagoWebhookSignature validates authentic HMAC-SHA256 signatur
   }
 });
 
+test('isExactApprovedPendingPayment confirms only approved payments matching exact amount and pending_payment state', () => {
+  assert.equal(
+    isExactApprovedPendingPayment({
+      currentStatus: 'pending_payment',
+      expectedAmountCents: 45000,
+      mpStatus: 'approved',
+      transactionAmountBrl: 450.0,
+    }).ok,
+    true
+  );
+
+  assert.equal(
+    isExactApprovedPendingPayment({
+      currentStatus: 'pending_payment',
+      expectedAmountCents: 45000,
+      mpStatus: 'approved',
+      transactionAmountBrl: 449.99,
+    }).reason,
+    'amount_mismatch'
+  );
+
+  assert.equal(
+    isExactApprovedPendingPayment({
+      currentStatus: 'confirmed',
+      expectedAmountCents: 45000,
+      mpStatus: 'approved',
+      transactionAmountBrl: 450.0,
+    }).reason,
+    'status_not_pending_payment'
+  );
+
+  assert.equal(
+    isExactApprovedPendingPayment({
+      currentStatus: 'pending_payment',
+      expectedAmountCents: 45000,
+      mpStatus: 'pending',
+      transactionAmountBrl: 450.0,
+    }).reason,
+    'payment_not_approved'
+  );
+});
+
 test('formatMoney converts BRL cents across BRL, USD, and EUR', () => {
   const brl = formatMoney(45000, 'BRL');
   const usd = formatMoney(10000, 'USD');
@@ -255,57 +290,60 @@ test('Travel integration refuses to fabricate flight offers when Amadeus credent
   }
 });
 
-test('Auth, Admin Master & Sub-Admin RBAC middlewares enforce granular permissions', async () => {
-  const app = express();
-  app.get('/protected', requireAuth, (_req, res) => res.json({ ok: true }));
-  app.get(
-    '/admin-only',
-    (req, _res, next) => {
-      (req as AuthRequest).dbUser = { role: 'tourist' } as NonNullable<AuthRequest['dbUser']>;
-      next();
-    },
-    requireAdmin,
-    (_req, res) => res.json({ ok: true })
-  );
-  app.get(
-    '/subadmin-editorial',
-    (req, _res, next) => {
-      (req as AuthRequest).adminPermissions = ['editorial', 'chat'];
-      next();
-    },
-    requireAdminPermission('editorial'),
-    (_req, res) => res.json({ ok: true })
-  );
-  app.get(
-    '/subadmin-finance',
-    (req, _res, next) => {
-      (req as AuthRequest).adminPermissions = ['editorial', 'chat'];
-      next();
-    },
-    requireAdminPermission('finance'),
-    (_req, res) => res.json({ ok: true })
-  );
+test('Admin & Sub-Admin RBAC requires verified email and enforces granular tab permissions', () => {
+  assert.equal(isVerifiedAdminIdentity({ emailVerified: true, role: 'admin' }), true);
+  assert.equal(isVerifiedAdminIdentity({ emailVerified: true, role: 'subadmin' }), true);
+  assert.equal(isVerifiedAdminIdentity({ emailVerified: false, role: 'admin' }), false);
+  assert.equal(isVerifiedAdminIdentity({ emailVerified: false, role: 'subadmin' }), false);
+  assert.equal(isVerifiedAdminIdentity({ emailVerified: true, role: 'tourist' }), false);
 
-  const server = http.createServer(app);
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : 0;
+  const subAdminPerms = ['editorial', 'chat'];
+  assert.equal(hasAdminPermission(subAdminPerms, 'editorial'), true);
+  assert.equal(hasAdminPermission(subAdminPerms, 'chat'), true);
+  assert.equal(hasAdminPermission(subAdminPerms, 'finance'), false);
+  assert.equal(hasAdminPermission(subAdminPerms, 'merchants'), false);
+  assert.equal(hasAdminPermission(['*'], 'finance'), true);
+});
 
-  try {
-    const resUnauth = await fetch(`http://127.0.0.1:${port}/protected`);
-    assert.equal(resUnauth.status, 401);
+test('Vercel serverless & Firebase architecture invariants hold cleanly', () => {
+  // Legacy Express/Postgres/WebSocket files must be removed
+  assert.equal(fs.existsSync('server.ts'), false);
+  assert.equal(fs.existsSync('drizzle.config.ts'), false);
+  assert.equal(fs.existsSync('src/db'), false);
+  assert.equal(fs.existsSync('src/routes'), false);
+  assert.equal(fs.existsSync('src/middleware'), false);
+  assert.equal(fs.existsSync('src/services'), false);
 
-    const resForbidden = await fetch(`http://127.0.0.1:${port}/admin-only`);
-    assert.equal(resForbidden.status, 403);
-
-    const resSubAllowed = await fetch(`http://127.0.0.1:${port}/subadmin-editorial`);
-    assert.equal(resSubAllowed.status, 200);
-
-    const resSubDenied = await fetch(`http://127.0.0.1:${port}/subadmin-finance`);
-    assert.equal(resSubDenied.status, 403);
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+  // package.json must not include Express/Postgres/Drizzle/WS
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const allDeps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  for (const forbidden of ['express', 'pg', 'drizzle-orm', 'drizzle-kit', 'ws']) {
+    assert.equal(forbidden in allDeps, false, `Forbidden legacy dependency present: ${forbidden}`);
   }
+
+  // Count Vercel Serverless Functions in /api excluding /api/_lib (must be strictly < 12)
+  const countFunctions = (dir: string): number => {
+    let count = 0;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === '_lib') continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) count += countFunctions(full);
+      else if (entry.name.endsWith('.ts')) count += 1;
+    }
+    return count;
+  };
+  const fnCount = countFunctions('api');
+  assert.ok(fnCount > 0 && fnCount < 12, `Expected 1..11 Vercel functions, got ${fnCount}`);
+  assert.equal(fs.existsSync('api/webhooks/mercadopago.ts'), true);
+
+  // Client-side payment self-confirmation endpoints/buttons must be absent
+  const bookingModalSrc = fs.readFileSync('src/components/BookingModal.tsx', 'utf8');
+  const merchantPortalSrc = fs.readFileSync('src/components/MerchantPortal.tsx', 'utf8');
+  assert.equal(bookingModalSrc.includes('/api/payments/verify-server'), false);
+  assert.equal(merchantPortalSrc.includes('/api/merchant/plans/verify-server'), false);
 });
 
 test('Promotional Pop-Up library has 54 ready-to-use models covering all 12 categories with valid assets', () => {

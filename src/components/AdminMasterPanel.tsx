@@ -133,9 +133,30 @@ export const AdminMasterPanel: React.FC<{
   const [integrations, setIntegrations] = useState<IntegrationsPayload | null>(null);
   const [subAdmins, setSubAdmins] = useState<AdminPermissionRecord[]>([]);
 
+  const getDefaultAllowedTab = ():
+    | 'merchants'
+    | 'finance'
+    | 'agents'
+    | 'editorial'
+    | 'popups'
+    | 'concierge'
+    | 'subadmins'
+    | 'integrations'
+    | 'audit' => {
+    if (hasAdminPermission('merchants')) return 'merchants';
+    if (hasAdminPermission('finance')) return 'finance';
+    if (hasAdminPermission('agents')) return 'agents';
+    if (hasAdminPermission('editorial')) return 'editorial';
+    if (hasAdminPermission('overview')) return 'concierge';
+    if (hasAdminPermission('integrations')) return 'integrations';
+    if (hasAdminPermission('security')) return 'audit';
+    if (dbUser?.role === 'admin') return 'subadmins';
+    return 'merchants';
+  };
+
   const [tab, setTab] = useState<
     'merchants' | 'finance' | 'agents' | 'editorial' | 'popups' | 'concierge' | 'subadmins' | 'integrations' | 'audit'
-  >('merchants');
+  >(getDefaultAllowedTab);
 
   // Forms & filters
   const [couponCode, setCouponCode] = useState('');
@@ -172,10 +193,56 @@ export const AdminMasterPanel: React.FC<{
 
   const loadAllAdmin = useCallback(async () => {
     try {
-      const ov = await apiFetch<AdminOverview>('/api/admin/overview');
-      setData(ov);
-
       const loaders: Promise<void>[] = [];
+
+      if (hasAdminPermission('overview')) {
+        loaders.push(
+          apiFetch<AdminOverview>('/api/admin/overview').then((ov) => {
+            setData(ov);
+          })
+        );
+      } else {
+        const emptyOverview: AdminOverview = {
+          metrics: {
+            usersCount: 0,
+            merchantsCount: 0,
+            destinationsCount: 0,
+            listingsCount: 0,
+            bookingsCount: 0,
+            gmvCents: 0,
+            commissionRevenueCents: 0,
+          },
+          merchants: [],
+          plans: [],
+          bookings: [],
+          coupons: [],
+          conciergeRequests: [],
+          reports: [],
+          auditLogs: [],
+        };
+        if (hasAdminPermission('merchants')) {
+          loaders.push(
+            apiFetch<{
+              merchants: Merchant[];
+              coupons: AdminOverview['coupons'];
+              listings: unknown[];
+            }>('/api/admin/merchants').then((res) => {
+              setData({
+                ...emptyOverview,
+                merchants: res.merchants || [],
+                coupons: res.coupons || [],
+                metrics: {
+                  ...emptyOverview.metrics,
+                  merchantsCount: res.merchants?.length || 0,
+                  listingsCount: res.listings?.length || 0,
+                },
+              });
+            })
+          );
+        } else {
+          setData(emptyOverview);
+        }
+      }
 
       if (hasAdminPermission('finance')) {
         loaders.push(

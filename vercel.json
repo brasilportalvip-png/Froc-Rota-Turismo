@@ -1,0 +1,44 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/**/*.ts": {
+      "includeFiles": "firebase-applet-config.json"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/health", "destination": "/api/health" },
+    { "source": "/api/plans", "destination": "/api/plans" },
+    { "source": "/api/popups", "destination": "/api/popups" },
+    { "source": "/api/webhooks/mercadopago", "destination": "/api/webhooks/mercadopago" },
+
+    { "source": "/api/bookings", "destination": "/api/bookings?route=/bookings" },
+    { "source": "/api/bookings/(.*)", "destination": "/api/bookings?route=/bookings/$1" },
+
+    { "source": "/api/destinations", "destination": "/api/catalog?route=/destinations" },
+    { "source": "/api/destinations/(.*)", "destination": "/api/catalog?route=/destinations/$1" },
+    { "source": "/api/listings", "destination": "/api/catalog?route=/listings" },
+    { "source": "/api/listings/(.*)", "destination": "/api/catalog?route=/listings/$1" },
+    { "source": "/api/posts", "destination": "/api/catalog?route=/posts" },
+    { "source": "/api/coupons/validate", "destination": "/api/catalog?route=/coupons/validate" },
+    { "source": "/api/pricing/preview", "destination": "/api/catalog?route=/pricing/preview" },
+    { "source": "/api/travel/status", "destination": "/api/catalog?route=/travel/status" },
+    { "source": "/api/travel/search", "destination": "/api/catalog?route=/travel/search" },
+    { "source": "/api/ai/chat", "destination": "/api/catalog?route=/ai/chat" },
+
+    { "source": "/api/me", "destination": "/api/tourist?route=/me" },
+    { "source": "/api/tourist/(.*)", "destination": "/api/tourist?route=/tourist/$1" },
+    { "source": "/api/favorites/toggle", "destination": "/api/tourist?route=/favorites/toggle" },
+    { "source": "/api/reviews", "destination": "/api/tourist?route=/reviews" },
+    { "source": "/api/concierge", "destination": "/api/tourist?route=/concierge" },
+    { "source": "/api/reports", "destination": "/api/tourist?route=/reports" },
+    { "source": "/api/travel/orders", "destination": "/api/tourist?route=/travel/orders" },
+    { "source": "/api/chat/(.*)", "destination": "/api/tourist?route=/chat/$1" },
+
+    { "source": "/api/merchant/(.*)", "destination": "/api/merchant?route=/merchant/$1" },
+    { "source": "/api/oauth/(.*)", "destination": "/api/merchant?route=/oauth/$1" },
+
+    { "source": "/api/admin/(.*)", "destination": "/api/admin?route=/admin/$1" },
+
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

@@ -34,7 +34,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [createdBooking, setCreatedBooking] = useState<Booking | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
-  const [verifying, setVerifying] = useState(false);
 
   const units =
     listing.moduleType === 'accommodation'
@@ -93,28 +92,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       setCreatedBooking(res.booking);
       setCheckoutUrl(res.checkoutUrl);
       notify('Reserva criada. Aguardando validação de pagamento no servidor.', 'info');
+      onSuccess();
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : 'Erro ao reservar.', 'error');
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleServerConfirm = async () => {
-    if (!createdBooking) return;
-    setVerifying(true);
-    try {
-      const res = await apiFetch<{ booking: Booking }>('/api/payments/verify-server', {
-        method: 'POST',
-        body: JSON.stringify({ bookingCode: createdBooking.bookingCode }),
-      });
-      setCreatedBooking(res.booking);
-      notify('Pagamento validado pelo servidor! Reserva confirmada.', 'success');
-      onSuccess();
-    } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'Erro na conciliação.', 'error');
-    } finally {
-      setVerifying(false);
     }
   };
 
@@ -172,7 +154,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <div className="space-y-3">
                 <p className="text-xs text-[#111111]/75 leading-relaxed">
                   Por segurança financeira, nenhuma reserva é confirmada apenas pelo navegador. A
-                  confirmação ocorre no servidor via webhook assinado do provedor (Mercado Pago).
+                  confirmação ocorre exclusivamente via webhook assinado do Mercado Pago após
+                  aprovação do pagamento com valor idêntico ao da reserva.
                 </p>
                 {checkoutUrl ? (
                   <a
@@ -184,16 +167,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     Pagar no Mercado Pago
                   </a>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={handleServerConfirm}
-                    disabled={verifying}
-                    className="w-full min-h-[44px] py-3 rounded-xl froc-btn-gold text-sm font-extrabold"
-                  >
-                    {verifying
-                      ? 'Validando no servidor...'
-                      : 'Simular Webhook e Confirmar no Servidor (Sandbox)'}
-                  </button>
+                  <div className="p-3.5 rounded-xl bg-[#FFD700]/15 border border-[#111111]/25 text-xs font-semibold text-[#111111]">
+                    Preferência do Mercado Pago indisponível no momento (verifique
+                    MERCADOPAGO_ACCESS_TOKEN no servidor). A reserva permanece aguardando pagamento.
+                  </div>
                 )}
               </div>
             )}

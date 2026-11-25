@@ -1,13 +1,99 @@
+import 'dotenv/config';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import fs from 'fs';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, type Plugin} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
+
+function resolveApiHandlerModule(pathname: string): string | null {
+  const clean = pathname.replace(/\/+$/, '') || '/';
+  if (clean === '/api/health') return './api/health.ts';
+  if (clean === '/api/plans') return './api/plans.ts';
+  if (clean === '/api/popups') return './api/popups.ts';
+  if (clean === '/api/webhooks/mercadopago') return './api/webhooks/mercadopago.ts';
+  if (clean === '/api/bookings' || clean.startsWith('/api/bookings/')) return './api/bookings.ts';
+  if (
+    clean === '/api/destinations' ||
+    clean.startsWith('/api/destinations/') ||
+    clean === '/api/listings' ||
+    clean.startsWith('/api/listings/') ||
+    clean === '/api/posts' ||
+    clean === '/api/coupons/validate' ||
+    clean === '/api/pricing/preview' ||
+    clean === '/api/travel/status' ||
+    clean === '/api/travel/search' ||
+    clean === '/api/ai/chat'
+  ) {
+    return './api/catalog.ts';
+  }
+  if (
+    clean === '/api/me' ||
+    clean.startsWith('/api/tourist/') ||
+    clean === '/api/favorites/toggle' ||
+    clean === '/api/reviews' ||
+    clean === '/api/concierge' ||
+    clean === '/api/reports' ||
+    clean === '/api/travel/orders' ||
+    clean.startsWith('/api/chat/')
+  ) {
+    return './api/tourist.ts';
+  }
+  if (clean.startsWith('/api/merchant/') || clean.startsWith('/api/oauth/')) {
+    return './api/merchant.ts';
+  }
+  if (clean.startsWith('/api/admin/')) {
+    return './api/admin.ts';
+  }
+  return null;
+}
+
+function frocVercelDevApiPlugin(): Plugin {
+  return {
+    name: 'froc-vercel-dev-api',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const url = req.url || '/';
+        const pathname = url.split('?')[0] || '/';
+        if (!pathname.startsWith('/api/')) {
+          return next();
+        }
+        const modPath = resolveApiHandlerModule(pathname);
+        if (!modPath) {
+          res.statusCode = 404;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({error: 'API endpoint not found'}));
+          return;
+        }
+        try {
+          const mod = (await server.ssrLoadModule(modPath)) as {
+            default?: (request: typeof req, response: typeof res) => Promise<void> | void;
+          };
+          if (typeof mod.default !== 'function') {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({error: 'Invalid API handler'}));
+            return;
+          }
+          await mod.default(req, res);
+        } catch (err) {
+          console.error('[froc-vercel-dev-api] error:', err);
+          if (!res.headersSent) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({error: 'Internal server error'}));
+          }
+        }
+      });
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
     plugins: [
+      frocVercelDevApiPlugin(),
       react(),
       tailwindcss(),
       VitePWA({

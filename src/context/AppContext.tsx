@@ -1,12 +1,8 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, User as FirebaseUser } from 'firebase/auth';
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   auth,
-  firestoreDb,
   googleAuthProvider,
-  handleFirestoreError,
-  OperationType,
 } from '../lib/firebase.ts';
 import { AppCurrency, AppLanguage, DbUser, Merchant } from '../types.ts';
 
@@ -14,13 +10,6 @@ interface ToastMessage {
   id: number;
   text: string;
   type: 'info' | 'success' | 'error';
-}
-
-export interface RealtimeEvent {
-  type: string;
-  channel: string;
-  data: unknown;
-  ts?: number;
 }
 
 interface AppContextValue {
@@ -33,7 +22,6 @@ interface AppContextValue {
   authLoading: boolean;
   language: AppLanguage;
   currency: AppCurrency;
-  lastRealtimeEvent: RealtimeEvent | null;
   setLanguage: (lang: AppLanguage) => void;
   setCurrency: (curr: AppCurrency) => void;
   loginWithGoogle: () => Promise<void>;
@@ -55,8 +43,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [language, setLanguageState] = useState<AppLanguage>('pt');
   const [currency, setCurrencyState] = useState<AppCurrency>('BRL');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [lastRealtimeEvent, setLastRealtimeEvent] = useState<RealtimeEvent | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   const notify = useCallback((text: string, type: 'info' | 'success' | 'error' = 'info') => {
     const id = Date.now() + Math.random();
@@ -83,24 +69,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (data.user.preferredLang) setLanguageState(data.user.preferredLang);
         if (data.user.preferredCurrency) setCurrencyState(data.user.preferredCurrency);
 
-        // Mirror user profile metadata to Cloud Firestore under Eight-Pillar self-scoped rule
-        if (fbUser.emailVerified) {
-          const userDocPath = `users/${fbUser.uid}`;
-          try {
-            await setDoc(
-              doc(firestoreDb, 'users', fbUser.uid),
-              {
-                uid: fbUser.uid,
-                email: data.user.email,
-                name: data.user.name,
-                preferredLang: data.user.preferredLang,
-                preferredCurrency: data.user.preferredCurrency,
-                updatedAt: serverTimestamp(),
-              },
-              { merge: true }
-            );
-          } catch (fsErr) {
-            handleFirestoreError(fsErr, OperationType.WRITE, userDocPath);
+        if (
+          fbUser.emailVerified &&
+          (data.user.role === 'admin' || data.user.role === 'subadmin')
+        ) {
+          const tokenResult = await fbUser.getIdTokenResult();
+          if (tokenResult.claims.frocAdmin !== true) {
+            const refreshedToken = await fbUser.getIdToken(true);
+            setIdToken(refreshedToken);
           }
         }
       }
@@ -126,43 +102,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     return () => unsub();
   }, [syncProfile]);
-
-  // Real-time WebSocket connection (/ws on same host)
-  useEffect(() => {
-    let closed = false;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const connectWs = () => {
-      if (closed) return;
-      try {
-        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
-        wsRef.current = ws;
-        ws.onmessage = (ev) => {
-          try {
-            const parsed = JSON.parse(String(ev.data)) as RealtimeEvent;
-            setLastRealtimeEvent({ ...parsed, ts: Date.now() });
-          } catch {
-            // ignore non-json message
-          }
-        };
-        ws.onclose = () => {
-          if (!closed) {
-            retryTimer = setTimeout(connectWs, 4000);
-          }
-        };
-      } catch {
-        // Ignore WS failure in offline mode
-      }
-    };
-
-    connectWs();
-    return () => {
-      closed = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      wsRef.current?.close();
-    };
-  }, []);
 
   const apiFetch = useCallback(
     async <T,>(url: string, options: RequestInit = {}): Promise<T> => {
@@ -265,7 +204,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         authLoading,
         language,
         currency,
-        lastRealtimeEvent,
         setLanguage,
         setCurrency,
         loginWithGoogle,
