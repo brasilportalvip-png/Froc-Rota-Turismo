@@ -6,8 +6,15 @@ import { requireAdminContext } from './_lib/auth.ts';
 import { createUniqueEditorialPost, runDailyFivePostsBatch } from './_lib/editorial.ts';
 import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.ts';
 import {
+  getGeminiResilienceSnapshot,
+  resetGeminiCircuitBreakers,
+} from './_lib/gemini-resilience.ts';
+import {
   ApiRequest,
   ApiResponse,
+  checkRateLimit,
+  enforceApiSecurity,
+  getHeader,
   getQuery,
   getRoutePath,
   parseJsonBody,
@@ -17,10 +24,18 @@ import {
 import { getGoogleBusinessOAuthConfig, getMercadoPagoOAuthConfig } from './_lib/oauth.ts';
 import { getPaymentGatewayStatus } from './_lib/payment.ts';
 import { POPUP_CATEGORIES } from './_lib/popups.ts';
+import { getSecurityPostureSnapshot } from './_lib/security.ts';
 import { ensureSeeded } from './_lib/seed.ts';
 import { getTravelIntegrationsStatus } from './_lib/travel.ts';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
+  if (!enforceApiSecurity(req, res)) return;
+  if (!checkRateLimit(req, res, 'admin:api', 120, 60000)) return;
+  const authHeader = getHeader(req, 'authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    sendJson(res, 401, { error: 'Unauthorized: Missing token' });
+    return;
+  }
   try {
     await ensureSeeded();
   } catch (err) {
@@ -128,10 +143,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           travel: getTravelIntegrationsStatus(),
           payments: getPaymentGatewayStatus(),
           ai: {
-            configured: Boolean(
-              process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'
-            ),
+            ...getGeminiResilienceSnapshot(),
+            model: getGeminiResilienceSnapshot().cascadeModels[0],
           },
+          security: getSecurityPostureSnapshot(),
         },
       });
     } catch (error) {
@@ -393,11 +408,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         mercadoPagoOAuth: getMercadoPagoOAuthConfig(),
         connectedAccounts,
         ai: {
-          configured: Boolean(
-            process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'
-          ),
-          model: 'gemini-4-hydrogen',
+          ...getGeminiResilienceSnapshot(),
+          model: getGeminiResilienceSnapshot().cascadeModels[0],
         },
+        security: getSecurityPostureSnapshot(),
       });
     } catch {
       sendJson(res, 500, { error: 'Erro ao carregar integrações.' });
@@ -1077,6 +1091,36 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       console.error('POST /api/admin/permissions error:', error);
       sendJson(res, 500, { error: 'Erro ao salvar permissões de administrador.' });
     }
+    return;
+  }
+
+  // Security & Gemini Anti-Outage Status: GET /api/admin/security/status
+  if (req.method === 'GET' && route === '/admin/security/status') {
+    const ctx = await requireAdminContext(req, res, 'security');
+    if (!ctx) return;
+    sendJson(res, 200, {
+      geminiResilience: getGeminiResilienceSnapshot(),
+      securityPosture: getSecurityPostureSnapshot(),
+    });
+    return;
+  }
+
+  // Reset Gemini Circuit Breakers: POST /api/admin/security/reset-ai-circuit
+  if (req.method === 'POST' && route === '/admin/security/reset-ai-circuit') {
+    const ctx = await requireAdminContext(req, res, 'security');
+    if (!ctx) return;
+    resetGeminiCircuitBreakers();
+    await recordAuditLog({
+      actorUserId: ctx.dbUser.id,
+      actorEmail: ctx.dbUser.email,
+      action: 'ADMIN_GEMINI_CIRCUITS_RESET',
+      entityType: 'ai_resilience',
+      entityId: 'gemini-cascade',
+    });
+    sendJson(res, 200, {
+      reset: true,
+      geminiResilience: getGeminiResilienceSnapshot(),
+    });
     return;
   }
 

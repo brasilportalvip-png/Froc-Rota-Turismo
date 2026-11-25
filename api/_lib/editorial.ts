@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
 import { adminDb } from './firebase-admin.ts';
 import { nextSeqId } from './firestore-helpers.ts';
+import { generateResilientJson, resolveGeminiKeySlots } from './gemini-resilience.ts';
 import { dispatchAgentTask } from './agents.ts';
 
 const OWNED_ASSET_GALLERY: Array<{ image: string; destinationSlug: string; category: string }> = [
@@ -222,11 +223,7 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
   );
 
   const createdPosts: EditorialPostDoc[] = [];
-  const apiKey = process.env.GEMINI_API_KEY;
-  const ai =
-    apiKey && apiKey !== 'MY_GEMINI_API_KEY'
-      ? new GoogleGenAI({ apiKey, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } })
-      : null;
+  const hasGeminiKey = resolveGeminiKeySlots().length > 0;
 
   for (let i = 0; i < remainingSlots && i < availableAssets.length; i++) {
     const asset = availableAssets[i];
@@ -238,10 +235,13 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
     let body = `${String(dest?.description ?? '')} Melhor época para visitar: ${String(dest?.bestSeason ?? 'Todo o ano')}. Curiosidade local: ${String(dest?.curiosities ?? '')}`;
     let keywords = [String(dest?.name ?? 'Brasil'), asset.category, String(dest?.region ?? 'Turismo')];
 
-    if (ai && dest) {
+    if (hasGeminiKey && dest) {
       try {
-        const res = await ai.models.generateContent({
-          model: 'gemini-4-hydrogen',
+        const { data: parsed } = await generateResilientJson<{
+          title: string;
+          body: string;
+          keywords: string[];
+        }>({
           contents: JSON.stringify({
             date: today,
             focusCategory: asset.category,
@@ -265,12 +265,8 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
               required: ['title', 'body', 'keywords'],
             },
           },
+          validate: (p) => Boolean(p && p.title && p.body),
         });
-        const parsed = JSON.parse((res.text ?? '').trim()) as {
-          title: string;
-          body: string;
-          keywords: string[];
-        };
         if (parsed.title && parsed.body) {
           title = parsed.title;
           body = parsed.body;

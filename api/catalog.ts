@@ -2,10 +2,12 @@ import { adminDb } from './_lib/firebase-admin.ts';
 import { askFrocRotaAI } from './_lib/ai.ts';
 import { optionalAuthenticateRequest } from './_lib/auth.ts';
 import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.ts';
+import { GeminiResilienceError } from './_lib/gemini-resilience.ts';
 import {
   ApiRequest,
   ApiResponse,
   checkRateLimit,
+  enforceApiSecurity,
   getQuery,
   getRoutePath,
   parseJsonBody,
@@ -81,6 +83,7 @@ interface PostDoc extends Record<string, unknown> {
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
+  if (!enforceApiSecurity(req, res)) return;
   try {
     await ensureSeeded();
   } catch (err) {
@@ -362,6 +365,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   // POST /api/coupons/validate
   if (req.method === 'POST' && route === '/coupons/validate') {
+    if (!checkRateLimit(req, res, 'coupons:validate', 25, 60000)) return;
     try {
       const body = await parseJsonBody<{ code?: string }>(req);
       const code = String(body.code ?? '').trim().toUpperCase();
@@ -393,6 +397,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   // POST /api/pricing/preview
   if (req.method === 'POST' && route === '/pricing/preview') {
+    if (!checkRateLimit(req, res, 'pricing:preview', 40, 60000)) return;
     try {
       const body = await parseJsonBody<{
         category?: string;
@@ -536,9 +541,22 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       sendJson(res, 200, result);
     } catch (error: unknown) {
       console.error('POST /api/ai/chat error:', error);
-      const message =
-        error instanceof Error ? error.message : 'Erro ao consultar Froc Rota AI.';
-      sendJson(res, 500, { error: message });
+      if (error instanceof GeminiResilienceError) {
+        sendJson(res, error.httpStatus, { error: error.message, code: error.code });
+        return;
+      }
+      const rawMsg = error instanceof Error ? error.message : '';
+      if (rawMsg === 'PROMPT_POLICY_VIOLATION') {
+        sendJson(res, 400, {
+          error: 'Consulta bloqueada pela política de segurança da plataforma.',
+        });
+        return;
+      }
+      if (rawMsg === 'PROMPT_EMPTY') {
+        sendJson(res, 400, { error: 'Digite sua pergunta para a Froc Rota AI.' });
+        return;
+      }
+      sendJson(res, 500, { error: 'Erro ao consultar Froc Rota AI.' });
     }
     return;
   }

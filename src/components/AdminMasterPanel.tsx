@@ -97,7 +97,44 @@ interface IntegrationsPayload {
     externalAccountName: string | null;
     status: string;
   }>;
-  ai: { configured: boolean; model: string };
+  ai: {
+    configured: boolean;
+    model: string;
+    backupKeyConfigured?: boolean;
+    sdkCompatLine?: string;
+    cascadeModels?: string[];
+    totalRequests?: number;
+    totalFailovers?: number;
+    healthyRoutesCount?: number;
+    totalRoutesCount?: number;
+    overallStatus?: string;
+    routes?: Array<{
+      routeId: string;
+      model: string;
+      keySlot: string;
+      state: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+      consecutiveFailures: number;
+      totalSuccesses: number;
+      totalFailures: number;
+      failoverRecoveries: number;
+      lastLatencyMs: number | null;
+      cooldownRemainingSec: number;
+    }>;
+  };
+  security?: {
+    httpsStrictHeaders: boolean;
+    noStoreApiCache: boolean;
+    strictCorsOriginAllowlist: boolean;
+    maxJsonBodyBytes: number;
+    prototypeAndNoSqlSanitizer: boolean;
+    ssrfUrlFilter: boolean;
+    aiPromptInjectionGuard: boolean;
+    webhookHmacAndReplayWindowSec: number;
+    oauthHmacSignedState: boolean;
+    rbacVerifiedEmailRequired: boolean;
+    mercadoPagoWebhookSecretConfigured: boolean;
+    oauthCustomSecretConfigured: boolean;
+  };
 }
 
 const ALL_SUBADMIN_PERMS = [
@@ -1503,6 +1540,95 @@ export const AdminMasterPanel: React.FC<{
                       Callback OAuth: {integrations.mercadoPagoOAuth.redirectUri}
                     </p>
                   </div>
+                </div>
+
+                {/* Motor Anti-Quedas Gemini & Escudo de Segurança */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+                  <div className="p-4 rounded-2xl border-2 border-[#111111] bg-white space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 font-bold">
+                        <Sparkles className="w-4 h-4 text-[#FF1493]" />
+                        <span>Motor Anti-Quedas Gemini (Failover & Circuit Breaker)</span>
+                      </div>
+                      {hasAdminPermission('security') && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await apiFetch('/api/admin/security/reset-ai-circuit', { method: 'POST' });
+                              notify('Circuit breakers Gemini reiniciados com sucesso.', 'success');
+                              loadAllAdmin();
+                            } catch (err) {
+                              notify(
+                                err instanceof Error ? err.message : 'Erro ao reiniciar circuitos.',
+                                'error'
+                              );
+                            }
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-[#111111] text-[#39FF14] font-semibold hover:opacity-90"
+                        >
+                          Resetar Circuitos
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-[#111111]/75 font-mono-tabular text-[11px]">
+                      SDK: {integrations.ai.sdkCompatLine || '@google/genai 3.6+'} · Rotas saudáveis:{' '}
+                      {integrations.ai.healthyRoutesCount ?? 0}/{integrations.ai.totalRoutesCount ?? 0} · Failovers:{' '}
+                      {integrations.ai.totalFailovers ?? 0} · Chave Backup:{' '}
+                      {integrations.ai.backupKeyConfigured ? 'Ativa' : 'Opcional (pendente)'}
+                    </p>
+                    <div className="space-y-1.5">
+                      {(integrations.ai.routes || []).map((r) => (
+                        <div
+                          key={r.routeId}
+                          className="flex items-center justify-between px-3 py-2 rounded-lg bg-[#111111]/5 font-mono-tabular text-[11px]"
+                        >
+                          <span>
+                            <strong>{r.model}</strong> ({r.keySlot})
+                          </span>
+                          <span>
+                            {r.state} · OK {r.totalSuccesses} / Err {r.totalFailures}
+                            {r.lastLatencyMs !== null ? ` · ${r.lastLatencyMs}ms` : ''}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {integrations.security && (
+                    <div className="p-4 rounded-2xl border-2 border-[#111111] bg-white space-y-2.5">
+                      <div className="flex items-center gap-2 font-bold">
+                        <Shield className="w-4 h-4 text-[#39FF14]" />
+                        <span>Sistema de Segurança Robusto (Camadas Ativas)</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono-tabular">
+                        <div className="p-2 rounded-lg bg-[#111111]/5">
+                          Headers + no-store: {integrations.security.httpsStrictHeaders ? 'Ativo' : 'Off'}
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#111111]/5">
+                          CORS Allowlist: {integrations.security.strictCorsOriginAllowlist ? 'Ativo' : 'Off'}
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#111111]/5">
+                          Sanitizador NoSQL/Proto: {integrations.security.prototypeAndNoSqlSanitizer ? 'Ativo' : 'Off'}
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#111111]/5">
+                          Filtro SSRF & XSS URL: {integrations.security.ssrfUrlFilter ? 'Ativo' : 'Off'}
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#111111]/5">
+                          Guard Prompt IA: {integrations.security.aiPromptInjectionGuard ? 'Ativo' : 'Off'}
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#111111]/5">
+                          Webhook Replay Guard: {integrations.security.webhookHmacAndReplayWindowSec}s
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#111111]/5">
+                          RBAC E-mail Verificado: {integrations.security.rbacVerifiedEmailRequired ? 'Ativo' : 'Off'}
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#111111]/5">
+                          Limite JSON Body: {Math.round(integrations.security.maxJsonBodyBytes / 1024)}KB
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

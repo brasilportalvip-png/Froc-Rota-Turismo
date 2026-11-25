@@ -4,6 +4,8 @@ import { nextSeqId } from '../_lib/firestore-helpers.ts';
 import {
   ApiRequest,
   ApiResponse,
+  checkRateLimit,
+  enforceApiSecurity,
   getHeader,
   getQuery,
   parseJsonBody,
@@ -236,6 +238,8 @@ export async function reconcileMercadoPagoPayment(
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
+  if (!enforceApiSecurity(req, res, { allowThirdPartyWebhook: true })) return;
+  if (!checkRateLimit(req, res, 'webhook:mercadopago', 120, 60000)) return;
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'Method not allowed' });
     return;
@@ -257,9 +261,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         xSignatureHeader: xSignature,
         xRequestIdHeader: xRequestId,
         dataId,
+        enforceReplayWindow: true,
       })
     ) {
-      sendJson(res, 401, { error: 'Assinatura de webhook inválida.' });
+      sendJson(res, 401, { error: 'Assinatura de webhook inválida ou expirada.' });
       return;
     }
 

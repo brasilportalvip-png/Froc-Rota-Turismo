@@ -107,6 +107,8 @@ export function verifyMercadoPagoWebhookSignature(params: {
   xSignatureHeader?: string;
   xRequestIdHeader?: string;
   dataId?: string;
+  enforceReplayWindow?: boolean;
+  maxSkewSeconds?: number;
 }): boolean {
   const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
   if (!secret) {
@@ -127,11 +129,26 @@ export function verifyMercadoPagoWebhookSignature(params: {
   const v1 = parts.v1;
   if (!ts || !v1) return false;
 
+  if (params.enforceReplayWindow) {
+    const tsRaw = Number(ts);
+    if (!Number.isFinite(tsRaw) || tsRaw <= 0) return false;
+    // Mercado Pago may emit seconds or milliseconds; normalize to seconds
+    const tsSec = tsRaw > 1e12 ? Math.floor(tsRaw / 1000) : tsRaw;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const maxSkew = params.maxSkewSeconds ?? 900; // 15 minutes
+    if (Math.abs(nowSec - tsSec) > maxSkew) {
+      return false;
+    }
+  }
+
   const manifest = `id:${params.dataId};request-id:${params.xRequestIdHeader ?? ''};ts:${ts};`;
   const expected = crypto.createHmac('sha256', secret).update(manifest).digest('hex');
 
   try {
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1));
+    const bufExpected = Buffer.from(expected, 'utf8');
+    const bufProvided = Buffer.from(v1, 'utf8');
+    if (bufExpected.length !== bufProvided.length) return false;
+    return crypto.timingSafeEqual(bufExpected, bufProvided);
   } catch {
     return false;
   }

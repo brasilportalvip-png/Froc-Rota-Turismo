@@ -8,6 +8,7 @@ import {
   ApiRequest,
   ApiResponse,
   checkRateLimit,
+  enforceApiSecurity,
   getRoutePath,
   parseJsonBody,
   sendJson,
@@ -22,6 +23,8 @@ import { recordImmutableLedgerEntry } from './_lib/pricing.ts';
 import { ensureSeeded } from './_lib/seed.ts';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
+  if (!enforceApiSecurity(req, res)) return;
+  if (!checkRateLimit(req, res, 'bookings:api', 60, 60000)) return;
   try {
     await ensureSeeded();
   } catch (err) {

@@ -1,13 +1,16 @@
 import crypto from 'node:crypto';
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
 import { adminDb } from './_lib/firebase-admin.ts';
 import { dispatchAgentTask } from './_lib/agents.ts';
 import { recordAuditLog } from './_lib/audit.ts';
 import { authenticateRequest } from './_lib/auth.ts';
 import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.ts';
+import { generateResilientJson, resolveGeminiKeySlots } from './_lib/gemini-resilience.ts';
 import {
   ApiRequest,
   ApiResponse,
+  checkRateLimit,
+  enforceApiSecurity,
   getQuery,
   getRoutePath,
   parseJsonBody,
@@ -88,6 +91,8 @@ interface ListingDoc {
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
+  if (!enforceApiSecurity(req, res)) return;
+  if (!checkRateLimit(req, res, 'merchant:api', 90, 60000)) return;
   try {
     await ensureSeeded();
   } catch (err) {
@@ -923,15 +928,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         aiSuggestion: `Destaque a política flexível ("${item.cancellationPolicy}") e inclua fotos em alta luz natural para elevar o CTR no canal ${channel}.`,
       };
 
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
+      if (resolveGeminiKeySlots().length > 0) {
         try {
-          const ai = new GoogleGenAI({
-            apiKey,
-            httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-          });
-          const aiRes = await ai.models.generateContent({
-            model: 'gemini-4-hydrogen',
+          const { data: parsed } = await generateResilientJson<{
+            headline: string;
+            adCopy: string;
+            socialCaption: string;
+            aiSuggestion: string;
+          }>({
             contents: JSON.stringify({ listing: item, channel, tone }),
             config: {
               systemInstruction:
@@ -948,8 +952,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
                 required: ['headline', 'adCopy', 'socialCaption', 'aiSuggestion'],
               },
             },
+            validate: (p) => Boolean(p && p.headline && p.adCopy),
           });
-          const parsed = JSON.parse((aiRes.text ?? '').trim());
           if (parsed.headline && parsed.adCopy) generated = parsed;
         } catch {
           // Keep grounded fallback

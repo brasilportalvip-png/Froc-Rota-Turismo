@@ -1,8 +1,10 @@
-import { ApiRequest, ApiResponse, sendJson } from './_lib/http.ts';
+import { ApiRequest, ApiResponse, checkRateLimit, enforceApiSecurity, sendJson } from './_lib/http.ts';
 import { listActivePopups, POPUP_CATEGORIES } from './_lib/popups.ts';
 import { ensureSeeded } from './_lib/seed.ts';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
+  if (!enforceApiSecurity(req, res)) return;
+  if (!checkRateLimit(req, res, 'popups:api', 60, 60000)) return;
   if (req.method && req.method !== 'GET') {
     sendJson(res, 405, { error: 'Method not allowed' });
     return;

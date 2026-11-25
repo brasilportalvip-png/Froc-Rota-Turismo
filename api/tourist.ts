@@ -9,6 +9,7 @@ import {
   ApiRequest,
   ApiResponse,
   checkRateLimit,
+  enforceApiSecurity,
   getHeader,
   getQuery,
   getRoutePath,
@@ -91,6 +92,13 @@ async function verifyAuthoritativeFlightFareCents(params: {
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
+  if (!enforceApiSecurity(req, res)) return;
+  if (!checkRateLimit(req, res, 'tourist:api', 120, 60000)) return;
+  const authHeader = getHeader(req, 'authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    sendJson(res, 401, { error: 'Unauthorized: Missing token' });
+    return;
+  }
   try {
     await ensureSeeded();
   } catch (err) {
