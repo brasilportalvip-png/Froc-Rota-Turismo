@@ -4,7 +4,7 @@ import {
   applySecurityHeaders,
   isSafeExternalHttpsUrl,
   sanitizeUntrustedValue,
-} from './security.ts';
+} from './security.js';
 
 export interface ApiRequest extends IncomingMessage {
   body?: unknown;

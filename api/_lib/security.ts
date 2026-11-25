@@ -1,5 +1,5 @@
 import net from 'node:net';
-import type { ApiRequest, ApiResponse } from './http.ts';
+import type { ApiRequest, ApiResponse } from './http.js';
 
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_SANITIZE_DEPTH = 8;

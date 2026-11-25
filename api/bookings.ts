@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
-import { adminDb } from './_lib/firebase-admin.ts';
-import { dispatchAgentTask } from './_lib/agents.ts';
-import { recordAuditLog } from './_lib/audit.ts';
-import { authenticateRequest } from './_lib/auth.ts';
-import { nextSeqId } from './_lib/firestore-helpers.ts';
+import { adminDb } from './_lib/firebase-admin.js';
+import { dispatchAgentTask } from './_lib/agents.js';
+import { recordAuditLog } from './_lib/audit.js';
+import { authenticateRequest } from './_lib/auth.js';
+import { nextSeqId } from './_lib/firestore-helpers.js';
 import {
   ApiRequest,
   ApiResponse,
@@ -12,15 +12,15 @@ import {
   getRoutePath,
   parseJsonBody,
   sendJson,
-} from './_lib/http.ts';
-import { getAppBaseUrl } from './_lib/oauth.ts';
+} from './_lib/http.js';
+import { getAppBaseUrl } from './_lib/oauth.js';
 import {
   calculateCommissionSplit,
   createMercadoPagoPreference,
   getPaymentGatewayStatus,
-} from './_lib/payment.ts';
-import { recordImmutableLedgerEntry } from './_lib/pricing.ts';
-import { ensureSeeded } from './_lib/seed.ts';
+} from './_lib/payment.js';
+import { recordImmutableLedgerEntry } from './_lib/pricing.js';
+import { ensureSeeded } from './_lib/seed.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (!enforceApiSecurity(req, res)) return;

@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import { Type } from '@google/genai';
-import { adminDb } from './firebase-admin.ts';
-import { nextSeqId } from './firestore-helpers.ts';
-import { generateResilientJson, resolveGeminiKeySlots } from './gemini-resilience.ts';
-import { dispatchAgentTask } from './agents.ts';
+import { adminDb } from './firebase-admin.js';
+import { nextSeqId } from './firestore-helpers.js';
+import { generateResilientJson, resolveGeminiKeySlots } from './gemini-resilience.js';
+import { dispatchAgentTask } from './agents.js';
 
 const OWNED_ASSET_GALLERY: Array<{ image: string; destinationSlug: string; category: string }> = [
   {

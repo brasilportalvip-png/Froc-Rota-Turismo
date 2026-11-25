@@ -1,5 +1,5 @@
-import { adminDb } from './firebase-admin.ts';
-import { nextSeqId } from './firestore-helpers.ts';
+import { adminDb } from './firebase-admin.js';
+import { nextSeqId } from './firestore-helpers.js';
 
 export const POPUP_CATEGORIES = [
   'Passagens aéreas',

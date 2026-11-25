@@ -1,11 +1,11 @@
 import crypto from 'node:crypto';
 import { Type } from '@google/genai';
-import { adminDb } from './_lib/firebase-admin.ts';
-import { dispatchAgentTask } from './_lib/agents.ts';
-import { recordAuditLog } from './_lib/audit.ts';
-import { authenticateRequest } from './_lib/auth.ts';
-import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.ts';
-import { generateResilientJson, resolveGeminiKeySlots } from './_lib/gemini-resilience.ts';
+import { adminDb } from './_lib/firebase-admin.js';
+import { dispatchAgentTask } from './_lib/agents.js';
+import { recordAuditLog } from './_lib/audit.js';
+import { authenticateRequest } from './_lib/auth.js';
+import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.js';
+import { generateResilientJson, resolveGeminiKeySlots } from './_lib/gemini-resilience.js';
 import {
   ApiRequest,
   ApiResponse,
@@ -17,7 +17,7 @@ import {
   sanitizeAssetOrSafeHttpUrl,
   sendHtml,
   sendJson,
-} from './_lib/http.ts';
+} from './_lib/http.js';
 import {
   buildGoogleBusinessAuthUrl,
   buildMercadoPagoSellerAuthUrl,
@@ -27,9 +27,9 @@ import {
   getGoogleBusinessOAuthConfig,
   getMercadoPagoOAuthConfig,
   verifyOAuthState,
-} from './_lib/oauth.ts';
-import { createMercadoPagoPreference } from './_lib/payment.ts';
-import { ensureSeeded } from './_lib/seed.ts';
+} from './_lib/oauth.js';
+import { createMercadoPagoPreference } from './_lib/payment.js';
+import { ensureSeeded } from './_lib/seed.js';
 
 interface MerchantDoc {
   id: number;

@@ -1,7 +1,7 @@
 import type { DecodedIdToken } from 'firebase-admin/auth';
-import { adminAuth, adminDb } from './firebase-admin.ts';
-import { nextSeqId } from './firestore-helpers.ts';
-import { ApiRequest, ApiResponse, getHeader, sendJson } from './http.ts';
+import { adminAuth, adminDb } from './firebase-admin.js';
+import { nextSeqId } from './firestore-helpers.js';
+import { ApiRequest, ApiResponse, getHeader, sendJson } from './http.js';
 
 export const ADMIN_BOOTSTRAP_EMAIL = 'brasilportalvip@gmail.com';
 

@@ -1,6 +1,6 @@
-import { getGeminiResilienceSnapshot } from './_lib/gemini-resilience.ts';
-import { ApiRequest, ApiResponse, enforceApiSecurity, sendJson } from './_lib/http.ts';
-import { getSecurityPostureSnapshot } from './_lib/security.ts';
+import { getGeminiResilienceSnapshot } from './_lib/gemini-resilience.js';
+import { ApiRequest, ApiResponse, enforceApiSecurity, sendJson } from './_lib/http.js';
+import { getSecurityPostureSnapshot } from './_lib/security.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (!enforceApiSecurity(req, res)) return;
