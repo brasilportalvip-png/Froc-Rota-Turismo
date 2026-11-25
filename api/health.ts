@@ -8,11 +8,21 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     sendJson(res, 405, { error: 'Method not allowed' });
     return;
   }
+  // Carregado aqui dentro: se o Firebase falhar, o /api/health continua respondendo e mostra o motivo.
+  let firebase: Record<string, unknown>;
+  try {
+    const { getFirebaseStatus } = await import('./_lib/firebase-admin.js');
+    firebase = await getFirebaseStatus();
+  } catch (err) {
+    firebase = { ok: false, error: `Firebase Admin não carregou: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}` };
+  }
   const aiSnapshot = getGeminiResilienceSnapshot();
   const secSnapshot = getSecurityPostureSnapshot();
   sendJson(res, 200, {
-    ok: true,
+    ok: firebase.ok === true,
     service: 'Froc Rota Turismo API',
+    node: process.version,
+    firebase,
     gemini: {
       status: aiSnapshot.overallStatus,
       sdkCompatLine: aiSnapshot.sdkCompatLine,
