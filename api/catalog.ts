@@ -1,8 +1,8 @@
-import { adminDb } from './_lib/firebase-admin.ts';
-import { askFrocRotaAI } from './_lib/ai.ts';
-import { optionalAuthenticateRequest } from './_lib/auth.ts';
-import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.ts';
-import { GeminiResilienceError } from './_lib/gemini-resilience.ts';
+import { adminDb } from './_lib/firebase-admin.js';
+import { askFrocRotaAI } from './_lib/ai.js';
+import { optionalAuthenticateRequest } from './_lib/auth.js';
+import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.js';
+import { GeminiResilienceError } from './_lib/gemini-resilience.js';
 import {
   ApiRequest,
   ApiResponse,
@@ -12,11 +12,11 @@ import {
   getRoutePath,
   parseJsonBody,
   sendJson,
-} from './_lib/http.ts';
-import { getPaymentGatewayStatus } from './_lib/payment.ts';
-import { computePriceFromRule, resolvePricingRule } from './_lib/pricing.ts';
-import { ensureSeeded } from './_lib/seed.ts';
-import { getTravelIntegrationsStatus, searchLiveFlightsIfConfigured } from './_lib/travel.ts';
+} from './_lib/http.js';
+import { getPaymentGatewayStatus } from './_lib/payment.js';
+import { computePriceFromRule, resolvePricingRule } from './_lib/pricing.js';
+import { ensureSeeded } from './_lib/seed.js';
+import { getTravelIntegrationsStatus, searchLiveFlightsIfConfigured } from './_lib/travel.js';
 
 interface DestDoc extends Record<string, unknown> {
   id: number;

@@ -1,14 +1,14 @@
 import crypto from 'node:crypto';
-import { adminAuth, adminDb } from './_lib/firebase-admin.ts';
-import { dispatchAgentTask, ensure200AgentsSeeded } from './_lib/agents.ts';
-import { recordAuditLog } from './_lib/audit.ts';
-import { requireAdminContext } from './_lib/auth.ts';
-import { createUniqueEditorialPost, runDailyFivePostsBatch } from './_lib/editorial.ts';
-import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.ts';
+import { adminAuth, adminDb } from './_lib/firebase-admin.js';
+import { dispatchAgentTask, ensure200AgentsSeeded } from './_lib/agents.js';
+import { recordAuditLog } from './_lib/audit.js';
+import { requireAdminContext } from './_lib/auth.js';
+import { createUniqueEditorialPost, runDailyFivePostsBatch } from './_lib/editorial.js';
+import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.js';
 import {
   getGeminiResilienceSnapshot,
   resetGeminiCircuitBreakers,
-} from './_lib/gemini-resilience.ts';
+} from './_lib/gemini-resilience.js';
 import {
   ApiRequest,
   ApiResponse,
@@ -20,13 +20,13 @@ import {
   parseJsonBody,
   sanitizeAssetOrSafeHttpUrl,
   sendJson,
-} from './_lib/http.ts';
-import { getGoogleBusinessOAuthConfig, getMercadoPagoOAuthConfig } from './_lib/oauth.ts';
-import { getPaymentGatewayStatus } from './_lib/payment.ts';
-import { POPUP_CATEGORIES } from './_lib/popups.ts';
-import { getSecurityPostureSnapshot } from './_lib/security.ts';
-import { ensureSeeded } from './_lib/seed.ts';
-import { getTravelIntegrationsStatus } from './_lib/travel.ts';
+} from './_lib/http.js';
+import { getGoogleBusinessOAuthConfig, getMercadoPagoOAuthConfig } from './_lib/oauth.js';
+import { getPaymentGatewayStatus } from './_lib/payment.js';
+import { POPUP_CATEGORIES } from './_lib/popups.js';
+import { getSecurityPostureSnapshot } from './_lib/security.js';
+import { ensureSeeded } from './_lib/seed.js';
+import { getTravelIntegrationsStatus } from './_lib/travel.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (!enforceApiSecurity(req, res)) return;

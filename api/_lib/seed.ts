@@ -1,7 +1,7 @@
-import { adminDb } from './firebase-admin.ts';
-import { ensure200AgentsSeeded } from './agents.ts';
-import { computeEditorialHash, computeImageHash, EditorialPostDoc } from './editorial.ts';
-import { ensurePopupsSeeded } from './popups.ts';
+import { adminDb } from './firebase-admin.js';
+import { ensure200AgentsSeeded } from './agents.js';
+import { computeEditorialHash, computeImageHash, EditorialPostDoc } from './editorial.js';
+import { ensurePopupsSeeded } from './popups.js';
 
 let seedPromise: Promise<void> | null = null;
 

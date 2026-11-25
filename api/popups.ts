@@ -1,6 +1,6 @@
-import { ApiRequest, ApiResponse, checkRateLimit, enforceApiSecurity, sendJson } from './_lib/http.ts';
-import { listActivePopups, POPUP_CATEGORIES } from './_lib/popups.ts';
-import { ensureSeeded } from './_lib/seed.ts';
+import { ApiRequest, ApiResponse, checkRateLimit, enforceApiSecurity, sendJson } from './_lib/http.js';
+import { listActivePopups, POPUP_CATEGORIES } from './_lib/popups.js';
+import { ensureSeeded } from './_lib/seed.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (!enforceApiSecurity(req, res)) return;

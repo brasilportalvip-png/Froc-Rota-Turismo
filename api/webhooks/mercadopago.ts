@@ -1,6 +1,6 @@
-import { adminDb } from '../_lib/firebase-admin.ts';
-import { recordAuditLog } from '../_lib/audit.ts';
-import { nextSeqId } from '../_lib/firestore-helpers.ts';
+import { adminDb } from '../_lib/firebase-admin.js';
+import { recordAuditLog } from '../_lib/audit.js';
+import { nextSeqId } from '../_lib/firestore-helpers.js';
 import {
   ApiRequest,
   ApiResponse,
@@ -10,9 +10,9 @@ import {
   getQuery,
   parseJsonBody,
   sendJson,
-} from '../_lib/http.ts';
-import { verifyMercadoPagoWebhookSignature } from '../_lib/payment.ts';
-import { recordImmutableLedgerEntry } from '../_lib/pricing.ts';
+} from '../_lib/http.js';
+import { verifyMercadoPagoWebhookSignature } from '../_lib/payment.js';
+import { recordImmutableLedgerEntry } from '../_lib/pricing.js';
 
 export interface ReconcileMercadoPagoInput {
   externalReference: string;

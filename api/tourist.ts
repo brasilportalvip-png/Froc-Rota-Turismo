@@ -1,10 +1,10 @@
 import crypto from 'node:crypto';
-import { adminDb } from './_lib/firebase-admin.ts';
-import { dispatchAgentTask } from './_lib/agents.ts';
-import { askFrocRotaAI } from './_lib/ai.ts';
-import { recordAuditLog } from './_lib/audit.ts';
-import { authenticateRequest } from './_lib/auth.ts';
-import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.ts';
+import { adminDb } from './_lib/firebase-admin.js';
+import { dispatchAgentTask } from './_lib/agents.js';
+import { askFrocRotaAI } from './_lib/ai.js';
+import { recordAuditLog } from './_lib/audit.js';
+import { authenticateRequest } from './_lib/auth.js';
+import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.js';
 import {
   ApiRequest,
   ApiResponse,
@@ -16,13 +16,13 @@ import {
   parseJsonBody,
   sanitizeAssetOrSafeHttpUrl,
   sendJson,
-} from './_lib/http.ts';
+} from './_lib/http.js';
 import {
   computePriceFromRule,
   recordImmutableLedgerEntry,
   resolvePricingRule,
-} from './_lib/pricing.ts';
-import { ensureSeeded } from './_lib/seed.ts';
+} from './_lib/pricing.js';
+import { ensureSeeded } from './_lib/seed.js';
 
 async function verifyAuthoritativeFlightFareCents(params: {
   originIata: string;

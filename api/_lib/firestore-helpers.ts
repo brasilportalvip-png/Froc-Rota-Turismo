@@ -1,5 +1,5 @@
 import { Timestamp } from 'firebase-admin/firestore';
-import { adminDb } from './firebase-admin.ts';
+import { adminDb } from './firebase-admin.js';
 
 export async function nextSeqId(counterName: string): Promise<number> {
   const ref = adminDb.collection('_counters').doc(counterName);

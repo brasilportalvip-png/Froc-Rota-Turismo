@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
-import { adminDb } from './firebase-admin.ts';
-import { nextSeqId } from './firestore-helpers.ts';
+import { adminDb } from './firebase-admin.js';
+import { nextSeqId } from './firestore-helpers.js';
 
 const FALLBACK_STATE_SECRET = crypto.randomBytes(32).toString('hex');
 

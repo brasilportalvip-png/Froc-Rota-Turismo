@@ -1,7 +1,7 @@
 import { Type } from '@google/genai';
-import { adminDb } from './firebase-admin.ts';
-import { generateResilientJson } from './gemini-resilience.ts';
-import { sanitizeAiPrompt } from './security.ts';
+import { adminDb } from './firebase-admin.js';
+import { generateResilientJson } from './gemini-resilience.js';
+import { sanitizeAiPrompt } from './security.js';
 
 export interface AiAssistantResult {
   reply: string;

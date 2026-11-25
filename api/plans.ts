@@ -1,6 +1,6 @@
-import { adminDb } from './_lib/firebase-admin.ts';
-import { ApiRequest, ApiResponse, checkRateLimit, enforceApiSecurity, sendJson } from './_lib/http.ts';
-import { ensureSeeded } from './_lib/seed.ts';
+import { adminDb } from './_lib/firebase-admin.js';
+import { ApiRequest, ApiResponse, checkRateLimit, enforceApiSecurity, sendJson } from './_lib/http.js';
+import { ensureSeeded } from './_lib/seed.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (!enforceApiSecurity(req, res)) return;
