@@ -13,7 +13,11 @@ export interface NormalizedFlightOffer {
   airlineIata: string | null;
   price: { total: string; currency: string };
   totalCents: number;
-  /** Preço final ao cliente com a taxa Froc Rota (só quando a companhia cobra em reais). */
+  /** Tarifa da companhia convertida para reais (câmbio PTAX do Banco Central quando vem em outra moeda). */
+  supplierBrlCents: number | null;
+  fxRate: number | null;
+  fxDate: string | null;
+  /** Preço final ao cliente em reais, com a taxa Froc Rota. */
   finalClientCents: number | null;
   platformFeeCents: number | null;
   departureAt: string;
@@ -63,6 +67,9 @@ export function normalizeDuffelOffers(offers: DuffelOffer[]): NormalizedFlightOf
         airlineIata: o.owner?.iata_code ?? null,
         price: { total: o.total_amount, currency: o.total_currency },
         totalCents: Math.round(Number(o.total_amount) * 100),
+        supplierBrlCents: null,
+        fxRate: null,
+        fxDate: null,
         finalClientCents: null,
         platformFeeCents: null,
         departureAt: first?.departing_at ?? '',

@@ -43,3 +43,16 @@ test('Duffel: modo teste x real pela chave; radar da madrugada 00h–05h59', () 
   assert.equal(isMadrugada('2026-12-09T02:30:00'), true);
   assert.equal(isMadrugada('2026-12-09T06:00:00'), false);
 });
+
+test('Câmbio: usa a última cotação de venda do Banco Central (PTAX)', async () => {
+  const { pickLatestSellRate } = await import('../api/_lib/fx.ts');
+  assert.deepEqual(
+    pickLatestSellRate([
+      { cotacaoVenda: 6.1, dataHoraCotacao: '2026-11-24 13:00:00.000' },
+      { cotacaoVenda: 6.2, dataHoraCotacao: '2026-11-25 10:00:00.000' },
+      { cotacaoVenda: 0, dataHoraCotacao: '2026-11-25 13:00:00.000' },
+    ]),
+    { rate: 6.2, date: '2026-11-25' }
+  );
+  assert.equal(pickLatestSellRate([]), null);
+});

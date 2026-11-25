@@ -49,6 +49,8 @@ export const TravelAndConciergeSection: React.FC = () => {
       returnDepartureAt?: string | null;
       finalClientCents?: number | null;
       platformFeeCents?: number | null;
+      fxRate?: number | null;
+      fxDate?: string | null;
     }>;
     integrations: TravelIntegration[];
   } | null>(null);
@@ -356,6 +358,12 @@ export const TravelAndConciergeSection: React.FC = () => {
                               <div className="text-[10px] text-[#111111]/65">
                                 inclui taxa Froc Rota {formatMoney(offer.platformFeeCents ?? 0, 'BRL')}
                               </div>
+                              {offer.fxRate ? (
+                                <div className="text-[10px] text-[#111111]/65">
+                                  tarifa {offer.price?.currency} {offer.price?.total} × câmbio BC{' '}
+                                  {offer.fxRate.toFixed(4).replace('.', ',')} ({offer.fxDate?.split('-').reverse().join('/')})
+                                </div>
+                              ) : null}
                             </>
                           ) : (
                             <div className="text-sm font-extrabold text-[#111111]">

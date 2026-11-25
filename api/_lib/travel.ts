@@ -1,4 +1,5 @@
 import { duffelMode, isMadrugada, searchDuffelOffers } from './duffel.js';
+import { getBrlRate } from './fx.js';
 import { computePriceFromRule, resolvePricingRule } from './pricing.js';
 
 export interface TravelIntegrationStatus {
@@ -133,24 +134,29 @@ export async function searchLiveFlightsIfConfigured(params: {
       adults: params.adults,
     });
     if (params.madrugadaOnly) offers = offers.filter((o) => isMadrugada(o.departureAt));
-    // Taxa Froc Rota (regra de passagens do Motor Financeiro) só quando a tarifa vem em reais.
+    // Tudo em reais: converte pela cotação oficial (PTAX do Banco Central) e soma a taxa Froc Rota (regra de passagens).
+    const rates = new Map<string, { rate: number; date: string } | null>();
     for (const o of offers) {
-      if (o.price.currency !== 'BRL') continue;
+      const cur = o.price.currency.toUpperCase();
+      if (!rates.has(cur)) rates.set(cur, await getBrlRate(cur));
+      const fx = rates.get(cur);
+      if (!fx) continue;
+      o.supplierBrlCents = Math.round(o.totalCents * fx.rate);
+      o.fxRate = cur === 'BRL' ? null : fx.rate;
+      o.fxDate = cur === 'BRL' ? null : fx.date;
       try {
-        const rule = await resolvePricingRule({ category: 'flights', costCents: o.totalCents });
-        if (rule) {
-          const b = computePriceFromRule({ supplierCostCents: o.totalCents, rule });
-          o.finalClientCents = b.finalClientCents;
-          o.platformFeeCents = b.finalClientCents - o.totalCents;
-        }
+        const rule = await resolvePricingRule({ category: 'flights', costCents: o.supplierBrlCents });
+        const b = computePriceFromRule({ supplierCostCents: o.supplierBrlCents, rule });
+        o.finalClientCents = b.finalClientCents;
+        o.platformFeeCents = b.finalClientCents - o.supplierBrlCents;
       } catch {
-        // sem regra: mostra só a tarifa da companhia
+        o.finalClientCents = o.supplierBrlCents;
+        o.platformFeeCents = 0;
       }
     }
+    offers.sort((a, b) => (a.finalClientCents ?? Infinity) - (b.finalClientCents ?? Infinity));
     if (params.maxPriceBrl && params.maxPriceBrl > 0) {
-      offers = offers.filter(
-        (o) => o.price.currency !== 'BRL' || (o.finalClientCents ?? o.totalCents) <= params.maxPriceBrl! * 100
-      );
+      offers = offers.filter((o) => o.finalClientCents === null || o.finalClientCents <= params.maxPriceBrl! * 100);
     }
     return {
       connected: true,
