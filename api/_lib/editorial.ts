@@ -198,6 +198,18 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
     };
   }
 
+  // Trava do dia: a rotina automática e o botão do Admin não rodam juntos (evita 10 posts no mesmo dia).
+  const lockRef = adminDb.collection('_locks').doc(`editorial-${today}`);
+  const travou = await adminDb.runTransaction(async (tx) => {
+    const l = await tx.get(lockRef);
+    const desde = l.exists ? Date.parse(String(l.data()?.at || '')) : 0;
+    if (l.exists && Date.now() - desde < 5 * 60000) return false;
+    tx.set(lockRef, { at: new Date().toISOString() });
+    return true;
+  });
+  if (!travou) {
+    return { created: [], existingCount: existingToday.length, date: today, skipped: 'Jornal de hoje já está sendo gerado.' };
+  }
   const remainingSlots = 5 - existingToday.length;
   const usedImageHashes = new Set(existingToday.map((p) => p.imageHash));
   const [destsSnap, listingsSnap] = await Promise.all([
@@ -217,7 +229,9 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
   const recentSnap = await adminDb.collection('posts').orderBy('createdAt', 'desc').limit(60).get();
   const recentTitles = recentSnap.docs.map((d) => String(d.data().title || ''));
 
-  for (let i = 0; i < remainingSlots; i++) {
+  // As matérias são escritas EM PARALELO, com prazo total de 45 s (a função da Vercel tem 60 s).
+  const prazo = Date.now() + 45_000;
+  const gerar = async (i: number) => {
     const slot = existingToday.length + i;
     const destino = DESTINOS_BRASIL[(dayIndex * 5 + slot) % DESTINOS_BRASIL.length];
     const angle = ANGLES[(slot + Math.floor(dayIndex / 20)) % ANGLES.length];
@@ -237,9 +251,10 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
     let focusKeyphrase = keyphrase;
     let seoScore = 0;
 
+    let usouIA = false;
     if (hasGeminiKey) {
       let feedback = '';
-      for (let attempt = 0; attempt < 2; attempt++) {
+      for (let attempt = 0; attempt < 2 && prazo - Date.now() > 22_000; attempt++) {
         try {
           const { data: parsed } = await generateResilientJson<{
             focusKeyphrase: string;
@@ -262,7 +277,7 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
                 detalhes: seeded ? { descricao: seeded.description, melhorEpoca: seeded.bestSeason, comoChegar: seeded.howToGet } : null,
               },
               ofertasVerificadas: relatedListings.map((l) => l.title),
-              titulosQueJaExistem: recentTitles.concat(existingToday.map((p) => p.title)).concat(createdPosts.map((p) => p.title)),
+              titulosQueJaExistem: recentTitles.concat(existingToday.map((p) => p.title)),
               correcoesPedidas: feedback || undefined,
             }),
             config: {
@@ -290,7 +305,8 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
                 required: ['focusKeyphrase', 'title', 'metaDescription', 'body', 'keywords'],
               },
             },
-            timeoutMs: 25_000,
+            timeoutMs: Math.min(20_000, Math.max(5_000, prazo - Date.now() - 2_000)),
+            deadlineMs: Math.max(5_000, prazo - Date.now() - 1_000),
             validate: (p) => Boolean(p && p.title && p.body && p.focusKeyphrase),
           });
           const check = analyzeSeo({
@@ -311,6 +327,7 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
           keywords = parsed.keywords?.length ? parsed.keywords : keywords;
           focusKeyphrase = parsed.focusKeyphrase;
           seoScore = check.score;
+          usouIA = true;
           if (check.score >= 80) break;
           feedback = `Corrija: ${check.checks.filter((c) => !c.ok).map((c) => c.label).join('; ')}`;
         } catch {
@@ -319,6 +336,16 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
       }
     }
 
+    return { slot, destino, angle, title, body, summary, focusKeyphrase, seoScore, keywords, coverImage, fotoCredito, usouIA };
+  };
+  const geradas = await Promise.allSettled(Array.from({ length: remainingSlots }, (_, i) => gerar(i)));
+
+  for (const g of geradas) {
+    if (g.status !== 'fulfilled') {
+      console.error('editorial slot failed:', g.reason);
+      continue;
+    }
+    const { slot, destino, angle, title, body, summary, focusKeyphrase, seoScore, keywords, coverImage, fotoCredito, usouIA } = g.value;
     try {
       const post = await createUniqueEditorialPost({
         title,
@@ -334,7 +361,8 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
         coverImage,
         language: 'pt',
         authorAgentCode: `AGT-0${26 + (slot % 5)}`,
-        riskTier: 'low_auto',
+        // Texto curto de reserva (sem IA) não vai direto ao ar: fica para revisão no Admin.
+        riskTier: usouIA ? 'low_auto' : 'commercial_review',
         publishDate: today,
       });
       createdPosts.push(post);

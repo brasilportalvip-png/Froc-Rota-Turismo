@@ -526,12 +526,13 @@ ${
 <div class="card"><h3>Clientes verificados</h3><p>Todo turista confirma e-mail, CPF e foto antes de reservar. Menos golpe, menos calote.</p></div>
 <div class="card"><h3>Blog diário</h3><p>${data.posts.length} matérias publicadas e uma nova leva de matérias todo dia trazendo leitores para os destinos.</p></div>
 <div class="card"><h3>Marketing com IA</h3><p>A Central de Marketing escreve textos e campanhas para o seu anúncio.</p></div>
+<div class="card"><h3>Leilão de comissão</h3><p>Você escolhe sua comissão por reserva, de 14% a 25%. Quem oferece mais aparece primeiro no seu destino — a IA mostra quanto oferecer para chegar ao topo.</p></div>
 </div>
 <h2>Planos</h2>
 <div class="grid">${plans
             .map(
               (p) =>
-                `<div class="card"><span class="k">${escapeHtml(p.name)}</span><h3>${brl(Number(p.monthlyPriceCents))}/mês</h3><p>Comissão de ${(Number(p.commissionBps) / 100).toFixed(0)}% por reserva · até ${p.maxListings} anúncios</p><ul>${(
+                `<div class="card"><span class="k">${escapeHtml(p.name)}</span><h3>${brl(Number(p.monthlyPriceCents))}/mês</h3><p>${p.maxListings} anúncio${Number(p.maxListings) > 1 ? 's' : ''} por 30 dias · comissão por leilão de 14% a 25% por reserva</p><ul>${(
                   (p.benefitsJson as string[]) || []
                 )
                   .map((b) => `<li>${escapeHtml(b)}</li>`)

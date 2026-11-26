@@ -85,7 +85,10 @@ export async function getSellerAccessToken(merchantId: number): Promise<string |
     return data.access_token;
   } catch (err) {
     console.error('MP seller token refresh failed:', err);
-    return Date.parse(conn.expiresAt ?? '') > Date.now() ? conn.accessToken : null;
+    if (Date.parse(conn.expiresAt ?? '') > Date.now()) return conn.accessToken;
+    // Conexão vencida de vez: o parceiro precisa reconectar; os anúncios saem do ar até lá (nada de 409 no checkout).
+    await adminDb.collection('merchants').doc(String(merchantId)).set({ mpOauthConnected: false, mpReconnectNeeded: true }, { merge: true }).catch(() => undefined);
+    return null;
   }
 }
 

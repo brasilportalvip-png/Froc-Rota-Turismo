@@ -1167,6 +1167,6 @@ export async function listActivePopups(): Promise<PopupTemplateDoc[]> {
       const beforeEnd = !p.validUntil || p.validUntil >= today;
       return afterStart && beforeEnd;
     })
-    .map((p) => ({ ...p, imageUrl: assetParaFotoReal(p.imageUrl) }));
+    .map((p) => ({ ...p, imageUrl: assetParaFotoReal(p.imageUrl), createdByEmail: null }));
 }
 

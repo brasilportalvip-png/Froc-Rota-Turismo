@@ -52,6 +52,8 @@ export async function createMercadoPagoPreference(params: {
   sellerAccessToken?: string | null;
   payerEmail: string;
   appUrl: string;
+  /** Prazo para pagar (o link e o Pix vencem; as vagas seguradas são liberadas depois). */
+  expiresAt?: string;
 }) {
   const token = params.sellerAccessToken || process.env.MERCADOPAGO_ACCESS_TOKEN;
   if (!token) {
@@ -76,7 +78,14 @@ export async function createMercadoPagoPreference(params: {
       pending: `${params.appUrl}/?booking=${params.bookingCode}&payment=pending`,
     },
     auto_return: 'approved',
+    statement_descriptor: 'FROC ROTA',
   };
+  if (params.expiresAt) {
+    bodyPayload.expires = true;
+    bodyPayload.expiration_date_from = new Date().toISOString();
+    bodyPayload.expiration_date_to = params.expiresAt;
+    bodyPayload.date_of_expiration = params.expiresAt; // Pix/boleto também vencem
+  }
 
   if (params.sellerAccessToken && params.marketplaceFeeCents && params.marketplaceFeeCents > 0) {
     bodyPayload.marketplace_fee = Number((params.marketplaceFeeCents / 100).toFixed(2));
@@ -170,4 +179,35 @@ export function calculateCommissionSplit(params: {
     commissionCents,
     netMerchantCents,
   };
+}
+
+
+/** Prazo para pagar uma reserva antes de as vagas voltarem para venda. */
+export const PRAZO_PAGAMENTO_MIN = 60;
+
+/**
+ * Devolve o dinheiro de um pagamento no Mercado Pago (total). Com split, a comissão também volta.
+ * Idempotente pela chave do pagamento. Retorna true se o MP confirmou o reembolso.
+ */
+export async function refundMercadoPagoPayment(paymentId: string, token: string): Promise<boolean> {
+  if (!paymentId || !token) return false;
+  try {
+    const r = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(paymentId)}/refunds`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': `froc-refund-${paymentId}`,
+      },
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (r.ok) return true;
+    // Já reembolsado antes = ok
+    const txt = await r.text();
+    return /already refunded|payment_already_refunded/i.test(txt);
+  } catch (err) {
+    console.error('refund error:', err);
+    return false;
+  }
 }

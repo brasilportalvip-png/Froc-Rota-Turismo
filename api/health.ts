@@ -1,6 +1,5 @@
 import { getGeminiResilienceSnapshot } from './_lib/gemini-resilience.js';
 import { ApiRequest, ApiResponse, enforceApiSecurity, sendJson } from './_lib/http.js';
-import { getSecurityPostureSnapshot } from './_lib/security.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (!enforceApiSecurity(req, res)) return;
@@ -16,26 +15,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   } catch (err) {
     firebase = { ok: false, error: `Firebase Admin não carregou: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}` };
   }
+  // Resposta pública enxuta: diz se está no ar, sem expor configuração interna.
   const aiSnapshot = getGeminiResilienceSnapshot();
-  const secSnapshot = getSecurityPostureSnapshot();
   sendJson(res, 200, {
     ok: firebase.ok === true,
-    service: 'Froc Rota Turismo API',
-    node: process.version,
-    firebase,
-    gemini: {
-      status: aiSnapshot.overallStatus,
-      sdkCompatLine: aiSnapshot.sdkCompatLine,
-      healthyRoutes: aiSnapshot.healthyRoutesCount,
-      totalRoutes: aiSnapshot.totalRoutesCount,
-      modelsCount: aiSnapshot.cascadeModels.length,
-    },
-    security: {
-      headersActive: secSnapshot.httpsStrictHeaders,
-      strictCors: secSnapshot.strictCorsOriginAllowlist,
-      payloadGuardBytes: secSnapshot.maxJsonBodyBytes,
-      rbacVerifiedEmail: secSnapshot.rbacVerifiedEmailRequired,
-      webhookReplayGuardSec: secSnapshot.webhookHmacAndReplayWindowSec,
-    },
+    service: 'Froc Rota Turismo',
+    database: firebase.ok === true ? 'ok' : 'indisponível',
+    ai: aiSnapshot.overallStatus,
   });
 }

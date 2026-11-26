@@ -28,6 +28,56 @@ export interface NormalizedFlightOffer {
   flightNumbers: string[];
   returnDepartureAt: string | null;
   expiresAt: string | null;
+  /** Detalhe de cada trecho (ida e, se houver, volta): voos, escalas, tempo de espera e troca de avião. */
+  slices: FlightSlice[];
+  /** Duração total em minutos (ida + volta), para ordenar por "mais rápido". */
+  totalDurationMin: number;
+}
+
+export interface FlightSegmentInfo {
+  origin: string;
+  originName: string;
+  originCity: string;
+  destination: string;
+  destinationName: string;
+  destinationCity: string;
+  departureAt: string;
+  arrivalAt: string;
+  durationMin: number;
+  carrier: string;
+  carrierIata: string;
+  flightNumber: string;
+  operatedBy: string | null;
+  aircraft: string | null;
+  /** Paradas técnicas dentro do mesmo voo (o avião pousa, mas o passageiro não troca de voo). */
+  technicalStops: Array<{ airport: string; city: string; durationMin: number }>;
+}
+
+export interface FlightLayover {
+  airport: string;
+  airportName: string;
+  city: string;
+  durationMin: number;
+  /** Troca de avião (voo diferente) ou o mesmo avião segue viagem. */
+  changeAircraft: boolean;
+  /** Chega num aeroporto e sai de outro (ex.: Galeão → Santos Dumont): precisa se deslocar. */
+  changeAirport: boolean;
+  nextAirport: string;
+  /** Espera passa da meia-noite. */
+  overnight: boolean;
+}
+
+export interface FlightSlice {
+  origin: string;
+  originCity: string;
+  destination: string;
+  destinationCity: string;
+  departureAt: string;
+  arrivalAt: string;
+  durationMin: number;
+  stops: number;
+  segments: FlightSegmentInfo[];
+  layovers: FlightLayover[];
 }
 
 export function duffelMode(token = process.env.DUFFEL_ACCESS_TOKEN): 'test' | 'live' | null {
@@ -35,13 +85,24 @@ export function duffelMode(token = process.env.DUFFEL_ACCESS_TOKEN): 'test' | 'l
   return token.startsWith('duffel_live_') ? 'live' : 'test';
 }
 
+interface DuffelPlace {
+  iata_code?: string;
+  name?: string;
+  city_name?: string;
+  city?: { name?: string } | null;
+}
 interface DuffelSegment {
   departing_at?: string;
   arriving_at?: string;
-  origin?: { iata_code?: string };
-  destination?: { iata_code?: string };
-  marketing_carrier?: { iata_code?: string };
+  duration?: string | null;
+  origin?: DuffelPlace;
+  destination?: DuffelPlace;
+  marketing_carrier?: { iata_code?: string; name?: string };
   marketing_carrier_flight_number?: string;
+  operating_carrier?: { iata_code?: string; name?: string } | null;
+  operating_carrier_flight_number?: string | null;
+  aircraft?: { name?: string } | null;
+  stops?: Array<{ airport?: DuffelPlace; duration?: string | null }>;
 }
 interface DuffelOffer {
   id: string;
@@ -49,7 +110,85 @@ interface DuffelOffer {
   total_currency: string;
   expires_at?: string;
   owner?: { name?: string; iata_code?: string };
-  slices?: Array<{ segments?: DuffelSegment[] }>;
+  slices?: Array<{ duration?: string | null; segments?: DuffelSegment[] }>;
+}
+
+/** "PT2H35M" / "P1DT1H" → minutos. */
+export function isoDurationMin(d: string | null | undefined): number | null {
+  if (!d) return null;
+  const m = String(d).match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$/);
+  if (!m) return null;
+  return Number(m[1] || 0) * 1440 + Number(m[2] || 0) * 60 + Number(m[3] || 0);
+}
+
+/** Diferença em minutos entre dois horários locais do MESMO aeroporto (a Duffel manda hora local sem fuso). */
+function minutesBetweenLocal(a: string, b: string): number {
+  const ta = Date.parse(`${a.slice(0, 19)}Z`);
+  const tb = Date.parse(`${b.slice(0, 19)}Z`);
+  return Number.isFinite(ta) && Number.isFinite(tb) ? Math.max(0, Math.round((tb - ta) / 60000)) : 0;
+}
+
+const cidadeDe = (p?: DuffelPlace) => p?.city_name || p?.city?.name || p?.name || p?.iata_code || '';
+
+function sliceInfo(slice: { duration?: string | null; segments?: DuffelSegment[] }): FlightSlice | null {
+  const segs = slice.segments ?? [];
+  if (!segs.length) return null;
+  const segments: FlightSegmentInfo[] = segs.map((s) => ({
+    origin: s.origin?.iata_code ?? '',
+    originName: s.origin?.name ?? '',
+    originCity: cidadeDe(s.origin),
+    destination: s.destination?.iata_code ?? '',
+    destinationName: s.destination?.name ?? '',
+    destinationCity: cidadeDe(s.destination),
+    departureAt: s.departing_at ?? '',
+    arrivalAt: s.arriving_at ?? '',
+    durationMin: isoDurationMin(s.duration) ?? 0,
+    carrier: s.marketing_carrier?.name ?? '',
+    carrierIata: s.marketing_carrier?.iata_code ?? '',
+    flightNumber: `${s.marketing_carrier?.iata_code ?? ''}${s.marketing_carrier_flight_number ?? ''}`,
+    operatedBy:
+      s.operating_carrier?.name && s.operating_carrier.name !== s.marketing_carrier?.name ? s.operating_carrier.name : null,
+    aircraft: s.aircraft?.name ?? null,
+    technicalStops: (s.stops ?? []).map((t) => ({
+      airport: t.airport?.iata_code ?? '',
+      city: cidadeDe(t.airport),
+      durationMin: isoDurationMin(t.duration) ?? 0,
+    })),
+  }));
+  const layovers: FlightLayover[] = [];
+  for (let i = 0; i < segs.length - 1; i++) {
+    const a = segs[i];
+    const b = segs[i + 1];
+    const sameFlight =
+      Boolean(a.marketing_carrier_flight_number) &&
+      a.marketing_carrier?.iata_code === b.marketing_carrier?.iata_code &&
+      a.marketing_carrier_flight_number === b.marketing_carrier_flight_number;
+    layovers.push({
+      airport: a.destination?.iata_code ?? '',
+      airportName: a.destination?.name ?? '',
+      city: cidadeDe(a.destination),
+      durationMin: minutesBetweenLocal(a.arriving_at ?? '', b.departing_at ?? ''),
+      changeAircraft: !sameFlight,
+      changeAirport: (a.destination?.iata_code ?? '') !== (b.origin?.iata_code ?? ''),
+      nextAirport: b.origin?.iata_code ?? '',
+      overnight: (a.arriving_at ?? '').slice(0, 10) !== (b.departing_at ?? '').slice(0, 10),
+    });
+  }
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  const soma = segments.reduce((t, x) => t + x.durationMin, 0) + layovers.reduce((t, x) => t + x.durationMin, 0);
+  return {
+    origin: first.origin,
+    originCity: first.originCity,
+    destination: last.destination,
+    destinationCity: last.destinationCity,
+    departureAt: first.departureAt,
+    arrivalAt: last.arrivalAt,
+    durationMin: isoDurationMin(slice.duration) ?? soma,
+    stops: layovers.length + segments.reduce((t, x) => t + x.technicalStops.length, 0),
+    segments,
+    layovers,
+  };
 }
 
 /** Converte a resposta da Duffel no formato que a tela usa. Pura (testável). */
@@ -80,8 +219,15 @@ export function normalizeDuffelOffers(offers: DuffelOffer[]): NormalizedFlightOf
         flightNumbers: out.map((s) => `${s.marketing_carrier?.iata_code ?? ''}${s.marketing_carrier_flight_number ?? ''}`),
         returnDepartureAt: back[0]?.departing_at ?? null,
         expiresAt: o.expires_at ?? null,
+        slices: (o.slices ?? []).map(sliceInfo).filter((x): x is FlightSlice => Boolean(x)),
+        totalDurationMin: 0,
       };
     })
+    .map((o) => ({
+      ...o,
+      stops: o.slices[0]?.stops ?? o.stops,
+      totalDurationMin: o.slices.reduce((t, sl) => t + sl.durationMin, 0),
+    }))
     .filter((o) => o.departureAt && Number.isFinite(o.totalCents) && o.totalCents > 0)
     .sort((a, b) => a.totalCents - b.totalCents);
 }

@@ -2,6 +2,8 @@ import { adminDb } from './firebase-admin.js';
 import { ensure200AgentsSeeded } from './agents.js';
 import { computeEditorialHash, computeImageHash, EditorialPostDoc } from './editorial.js';
 import { ensurePopupsSeeded } from './popups.js';
+import { nextSeqId } from './firestore-helpers.js';
+import { COMISSAO_MIN_BPS } from './leilao.js';
 
 let seedPromise: Promise<void> | null = null;
 
@@ -29,6 +31,122 @@ async function ensureCounterAtLeast(counterName: string, minVal: number) {
 async function runSeedAll() {
   await runBaseSeed();
   await migrateBusinessRulesV2();
+  await migratePlanosLeilaoV3();
+}
+
+/** Planos definidos pelo dono (nov/2026): todos valem 30 dias. Comissão por leilão de 14% a 25%. */
+const PLANO_BENEFICIOS: Record<'basic' | 'pro' | 'premium', string[]> = {
+  basic: [
+    '1 anúncio ativo por 30 dias',
+    'Comissão por leilão: você escolhe de 14% a 25%',
+    'Quem oferece mais comissão aparece primeiro',
+    'Cobrança automática mensal no cartão',
+  ],
+  pro: [
+    '2 anúncios ativos por 30 dias',
+    'Comissão por leilão: você escolhe de 14% a 25%',
+    'Quem oferece mais comissão aparece primeiro',
+    'Cobrança automática mensal no cartão',
+  ],
+  premium: [
+    '7 anúncios ativos por 30 dias',
+    'Comissão por leilão: você escolhe de 14% a 25%',
+    'Quem oferece mais comissão aparece primeiro',
+    'Cobrança automática mensal no cartão',
+  ],
+};
+
+/**
+ * Migração (nov/2026, pedido do dono):
+ * - Planos: Básico 1 anúncio R$ 100; Profissional 2 anúncios R$ 149; Premium 7 anúncios R$ 349 (30 dias).
+ * - Passagens: sai a taxa fixa de R$ 200; entra comissão percentual (piso de 14%).
+ * - Conteúdo de demonstração (parceiros fictícios, notas e opiniões inventadas) sai do ar.
+ * Não apaga nada: só desativa/ajusta. Roda uma vez.
+ */
+async function migratePlanosLeilaoV3() {
+  const markerRef = adminDb.collection('_meta').doc('planos_leilao_v3');
+  const markerSnap = await markerRef.get();
+  if (markerSnap.exists && markerSnap.data()?.completed === true) return;
+  const now = new Date().toISOString();
+  const batch = adminDb.batch();
+  const planos: Array<['basic' | 'pro' | 'premium', string, number, number]> = [
+    ['basic', 'Anúncio Básico', 10000, 1],
+    ['pro', 'Profissional', 14900, 2],
+    ['premium', 'Premium', 34900, 7],
+  ];
+  for (const [slug, name, price, max] of planos) {
+    const snap = await adminDb.collection('merchant_plans').where('slug', '==', slug).limit(1).get();
+    for (const d of snap.docs) {
+      batch.set(
+        d.ref,
+        {
+          name,
+          monthlyPriceCents: price,
+          durationDays: 30,
+          maxListings: max,
+          featuredSlots: 0,
+          commissionBps: COMISSAO_MIN_BPS,
+          benefitsJson: PLANO_BENEFICIOS[slug],
+          active: true,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    }
+  }
+  // Passagens: desliga a taxa fixa de R$ 200 e cria a comissão percentual.
+  const flightRules = await adminDb.collection('pricing_rules').where('category', '==', 'flights').get();
+  for (const d of flightRules.docs) {
+    if ((d.data() as { ruleCode?: string }).ruleCode !== 'FLIGHT-PERCENT-14') batch.set(d.ref, { active: false, updatedAt: now }, { merge: true });
+  }
+  const temPercent = flightRules.docs.some((d) => (d.data() as { ruleCode?: string }).ruleCode === 'FLIGHT-PERCENT-14');
+  if (!temPercent) {
+    const todas = await adminDb.collection('pricing_rules').get();
+    const maxId = Math.max(0, ...todas.docs.map((d) => Number((d.data() as { id?: number }).id) || 0));
+    const id = Math.max(maxId + 1, await nextSeqId('pricing_rules'));
+    await ensureCounterAtLeast('pricing_rules', id);
+    batch.set(adminDb.collection('pricing_rules').doc(String(id)), {
+      id,
+      ruleCode: 'FLIGHT-PERCENT-14',
+      name: 'Passagens: comissão de 14%',
+      category: 'flights',
+      planSlug: 'all',
+      merchantId: null,
+      markupType: 'percent',
+      markupFixedCents: 0,
+      markupBps: COMISSAO_MIN_BPS,
+      minPriceCents: 1,
+      maxPriceCents: 100000000,
+      gatewayFeeBps: 0,
+      taxBps: 0,
+      maxFinalMarkupRatioBps: 10000,
+      active: true,
+      createdAt: now,
+    });
+  }
+  // Conteúdo de demonstração: parceiros sem dono real (sem userUid) e notas/opiniões inventadas.
+  const merchants = await adminDb.collection('merchants').get();
+  const demoIds = new Set(
+    merchants.docs.filter((d) => !(d.data() as { userUid?: string }).userUid).map((d) => Number((d.data() as { id: number }).id))
+  );
+  if (demoIds.size) {
+    const listings = await adminDb.collection('listings').get();
+    for (const d of listings.docs) {
+      const l = d.data() as { merchantId?: number };
+      if (demoIds.has(Number(l.merchantId))) {
+        batch.set(d.ref, { status: 'inactive', demo: true, ratingAvg: 0, reviewCount: 0, isFeatured: false, isSponsored: false, updatedAt: now }, { merge: true });
+      }
+    }
+  }
+  const reviews = await adminDb.collection('reviews').get();
+  for (const d of reviews.docs) {
+    const r = d.data() as { seeded?: boolean; userUid?: string };
+    if (r.seeded || !r.userUid) batch.set(d.ref, { hidden: true, hiddenReason: 'demo', updatedAt: now }, { merge: true });
+  }
+  const dests = await adminDb.collection('destinations').get();
+  for (const d of dests.docs) batch.set(d.ref, { ratingAvg: 0, reviewCount: 0 }, { merge: true });
+  batch.set(markerRef, { completed: true, migratedAt: now }, { merge: true });
+  await batch.commit();
 }
 
 /**
@@ -62,6 +180,12 @@ async function migrateBusinessRulesV2() {
       },
       { merge: true }
     );
+  }
+  // Pop-ups com jargão técnico, promessas internas ou patrocínio de parceiros de exemplo saem do ar.
+  const popups = await adminDb.collection('popup_templates').get();
+  const fora = new Set(['POP-004', 'POP-043', 'POP-044', 'POP-045', 'POP-046', 'POP-049', 'POP-050', 'POP-051', 'POP-052', 'POP-054']);
+  for (const d of popups.docs) {
+    if (fora.has(String((d.data() as { code?: string }).code))) batch.set(d.ref, { active: false, updatedAt: now }, { merge: true });
   }
   batch.set(markerRef, { completed: true, migratedAt: now }, { merge: true });
   await batch.commit();
@@ -114,18 +238,13 @@ async function seedPlans() {
     {
       id: 2,
       slug: 'basic',
-      name: 'Anúncio Básico (30 dias)',
+      name: 'Anúncio Básico',
       monthlyPriceCents: 10000,
       durationDays: 30,
-      commissionBps: 1500,
-      maxListings: 5,
-      featuredSlots: 1,
-      benefitsJson: [
-        'Publicação ativa por 30 dias',
-        'Galeria de fotografias autorizadas',
-        'Dados de contato direto e mapa',
-        'Cobrança automática mensal no cartão',
-      ],
+      commissionBps: COMISSAO_MIN_BPS,
+      maxListings: 1,
+      featuredSlots: 0,
+      benefitsJson: PLANO_BENEFICIOS.basic,
       active: true,
     },
     {
@@ -134,15 +253,10 @@ async function seedPlans() {
       name: 'Profissional',
       monthlyPriceCents: 14900,
       durationDays: 30,
-      commissionBps: 1200,
-      maxListings: 15,
-      featuredSlots: 2,
-      benefitsJson: [
-        'Até 15 anúncios nos módulos',
-        'Comissão reduzida para 12%',
-        '2 destaques regionais na bússola',
-        'Relatórios financeiros e repasses detalhados',
-      ],
+      commissionBps: COMISSAO_MIN_BPS,
+      maxListings: 2,
+      featuredSlots: 0,
+      benefitsJson: PLANO_BENEFICIOS.pro,
       active: true,
     },
     {
@@ -151,15 +265,10 @@ async function seedPlans() {
       name: 'Premium',
       monthlyPriceCents: 34900,
       durationDays: 30,
-      commissionBps: 800,
-      maxListings: 100,
-      featuredSlots: 6,
-      benefitsJson: [
-        'Anúncios ilimitados com selo curado',
-        'Menor comissão do ecossistema (8%)',
-        'Prioridade no Froc Rota AI e Concierge',
-        '6 campanhas patrocinadas mensais',
-      ],
+      commissionBps: COMISSAO_MIN_BPS,
+      maxListings: 7,
+      featuredSlots: 0,
+      benefitsJson: PLANO_BENEFICIOS.premium,
       active: true,
     },
   ];

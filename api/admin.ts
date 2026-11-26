@@ -376,6 +376,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         read: false,
         createdAt: nowIso,
       });
+      // LGPD: depois da decisão, as fotos do documento e a selfie são apagadas (fica só o resultado).
+      if (decision === 'approved' || decision === 'rejected') {
+        await Promise.all(['document', 'selfie'].map((k) => adminDb.collection('kyc_images').doc(`${uid}_${k}`).delete().catch(() => undefined)));
+        await ref.set({ hasDocumentImage: false, hasSelfieImage: false }, { merge: true });
+      }
       await recordAuditLog({
         actorUserId: ctx.dbUser.id,
         actorEmail: ctx.dbUser.email,
@@ -1269,30 +1274,20 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       const existing = snap.data() as { merchantId: number; planId: number };
       const body = await parseJsonBody<{ status?: string }>(req);
       const status = String(body.status || '');
-      if (!['active', 'courtesy', 'suspended', 'cancelled'].includes(status)) {
-        sendJson(res, 400, { error: 'Status inválido.' });
+      // Regra do dono: não existe plano gratuito/cortesia. O admin só suspende ou cancela.
+      if (!['suspended', 'cancelled'].includes(status)) {
+        sendJson(res, 400, { error: 'Status inválido. O plano só ativa com pagamento aprovado.' });
         return;
       }
 
-      const now = new Date();
-      const updates: Record<string, unknown> = {
-        status,
-        ...(status === 'courtesy'
-          ? {
-              startsAt: now.toISOString(),
-              expiresAt: new Date(now.getTime() + 30 * 86400000).toISOString(),
-              courtesyByEmail: ctx.dbUser.email,
-            }
-          : {}),
-      };
+      const updates = { status, autoRenew: false, updatedAt: new Date().toISOString(), changedByEmail: ctx.dbUser.email };
       await ref.update(updates);
-
-      if (status === 'courtesy' || status === 'active') {
-        await adminDb
-          .collection('merchants')
-          .doc(String(existing.merchantId))
-          .set({ planId: existing.planId }, { merge: true });
-      }
+      // Suspender/cancelar vale na hora para o parceiro: tira os anúncios do ar.
+      await adminDb
+        .collection('merchants')
+        .doc(String(existing.merchantId))
+        .set({ planStatus: status, planExpiresAt: new Date().toISOString() }, { merge: true });
+      await refreshMerchantListingsVisibility(existing.merchantId);
 
       await recordAuditLog({
         actorUserId: ctx.dbUser.id,

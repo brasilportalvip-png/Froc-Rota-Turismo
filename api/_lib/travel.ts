@@ -350,16 +350,14 @@ export async function precosDosDiasVizinhos(params: {
       return { date, minCents: null };
     }
   };
-  // no máximo 4 consultas ao mesmo tempo
-  const out: Array<{ date: string; minCents: number | null }> = new Array(datas.length);
-  let i = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(4, datas.length) }, async () => {
-      while (i < datas.length) {
-        const k = i++;
-        out[k] = await umDia(datas[k]);
-      }
-    })
+  // Os 7 dias ao mesmo tempo, cada um com no máximo 28 s (a função tem 60 s).
+  const out = await Promise.all(
+    datas.map((date) =>
+      Promise.race([
+        umDia(date),
+        new Promise<{ date: string; minCents: number | null }>((ok) => setTimeout(() => ok({ date, minCents: null }), 28_000)),
+      ])
+    )
   );
   return { available: true, dias: out };
 }

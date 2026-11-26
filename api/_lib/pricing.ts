@@ -95,19 +95,28 @@ export function computePriceFromRule(params: {
   };
 }
 
+const rulesCache = new Map<string, { at: number; rules: PricingRuleDoc[] }>();
+
 export async function resolvePricingRule(params: {
   category: string;
   merchantId?: number | null;
   planSlug?: string | null;
   costCents: number;
 }) {
-  const snap = await adminDb
-    .collection('pricing_rules')
-    .where('category', '==', params.category)
-    .where('active', '==', true)
-    .get();
-
-  const rules = snap.docs.map((d) => d.data() as PricingRuleDoc);
+  // Regras ficam 60 s na memória: uma busca de voos com 20 ofertas não faz 20 consultas ao banco.
+  const cached = rulesCache.get(params.category);
+  let rules: PricingRuleDoc[];
+  if (cached && Date.now() - cached.at < 60_000) {
+    rules = cached.rules;
+  } else {
+    const snap = await adminDb
+      .collection('pricing_rules')
+      .where('category', '==', params.category)
+      .where('active', '==', true)
+      .get();
+    rules = snap.docs.map((d) => d.data() as PricingRuleDoc);
+    rulesCache.set(params.category, { at: Date.now(), rules });
+  }
 
   const matched =
     rules.find(

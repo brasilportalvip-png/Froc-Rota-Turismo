@@ -231,7 +231,8 @@ export async function analyzeIdentityWithAI(params: {
           ],
         },
       },
-      timeoutMs: 30_000,
+      timeoutMs: 22_000,
+      deadlineMs: 26_000, // a função tem 60 s: nunca deixar o cliente esperando além disso
       validate: (p) => Boolean(p && typeof p.confianca === 'number'),
     });
     return {

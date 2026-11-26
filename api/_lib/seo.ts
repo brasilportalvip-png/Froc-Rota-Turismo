@@ -10,7 +10,9 @@ import crypto from 'node:crypto';
 export const SITE_NAME = 'Froc Rota Turismo';
 
 export function siteUrl(): string {
-  const raw = process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://froc-rota-turismo.vercel.app');
+  const raw =
+    process.env.APP_URL ||
+    (process.env.VERCEL_ENV !== 'production' && process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://froc-rota-turismo.vercel.app');
   return raw.replace(/\/+$/, '');
 }
 

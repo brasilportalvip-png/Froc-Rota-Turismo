@@ -88,6 +88,9 @@ export async function getOrCreateDbUser(decoded: DecodedIdToken): Promise<{
       nextRole = 'tourist';
     } else if (current.role === 'subadmin' && !isActiveSubAdmin) {
       nextRole = 'tourist';
+    } else if (current.role === 'admin' && !isBootstrapAdmin) {
+      // Administrador geral é só o dono. Qualquer outro "admin" gravado no banco perde o poder total.
+      nextRole = isActiveSubAdmin ? 'subadmin' : 'tourist';
     }
 
     if (nextRole !== current.role || current.email !== email || current.name !== name) {

@@ -61,6 +61,7 @@ const RUIM_CAT =
   /(\bmaps?\b|mapas|locator maps|flags of|bandeiras|coats of arms|bras[oõ]es|logos|paintings|pinturas|drawings|desenhos|postcards|cart[oõ]es postais|acervo|moreira salles|engravings|gravuras|illustrations)/i;
 
 const mem = new Map<string, { at: number; foto: FotoReal | null }>();
+const overridesMem = new Map<string, { at: number; foto: FotoReal | null }>();
 
 function stripHtml(s: unknown): string {
   return String(s ?? '')
@@ -106,7 +107,8 @@ function toFoto(p: CommonsPage): FotoReal | null {
   };
 }
 
-async function commons(params: Record<string, string>): Promise<CommonsPage[]> {
+/** null = o Commons não respondeu (não guardar como "sem foto"). */
+async function commons(params: Record<string, string>): Promise<CommonsPage[] | null> {
   const qs = new URLSearchParams({
     action: 'query',
     format: 'json',
@@ -122,11 +124,11 @@ async function commons(params: Record<string, string>): Promise<CommonsPage[]> {
   const timer = setTimeout(() => ctrl.abort(), 8000);
   try {
     const r = await fetch(`${API}?${qs.toString()}`, { headers: { 'User-Agent': UA, 'Api-User-Agent': UA }, signal: ctrl.signal });
-    if (!r.ok) return [];
+    if (!r.ok) return null;
     const j = (await r.json()) as { query?: { pages?: CommonsPage[] } };
     return j.query?.pages ?? [];
   } catch {
-    return [];
+    return null;
   } finally {
     clearTimeout(timer);
   }
@@ -136,7 +138,7 @@ async function commons(params: Record<string, string>): Promise<CommonsPage[]> {
 export async function fotoPorArquivo(file: string): Promise<FotoReal | null> {
   const title = file.startsWith('File:') ? file : `File:${file}`;
   const pages = await commons({ titles: title });
-  const p = pages.find((x) => !x.missing);
+  const p = (pages ?? []).find((x) => !x.missing);
   return p ? toFoto(p) : null;
 }
 
@@ -149,7 +151,7 @@ export function notaFoto(p: CommonsPage, palavras: string[]): number {
   if (!/jpeg|png|webp/.test(mime)) return -1;
   const w = Number(ii.width || 0);
   const h = Number(ii.height || 0);
-  if (w < 1200 || h < 700) return -1;
+  if (w < 1280 || h < 700) return -1;
   const cats = String(ii.extmetadata?.Categories?.value || '');
   if (RUIM_CAT.test(cats)) return -1;
   let nota = 1;
@@ -175,8 +177,9 @@ function palavrasDe(texto: string): string[] {
 }
 
 /** Procura a melhor foto real de um lugar no Commons. */
-export async function buscarFoto(consultas: string[]): Promise<FotoReal | null> {
+export async function buscarFoto(consultas: string[]): Promise<FotoReal | null | undefined> {
   let melhor: { nota: number; page: CommonsPage } | null = null;
+  let respondeu = false;
   for (const q of consultas) {
     const pages = await commons({
       generator: 'search',
@@ -184,6 +187,8 @@ export async function buscarFoto(consultas: string[]): Promise<FotoReal | null> 
       gsrsearch: `${q} filetype:bitmap`,
       gsrlimit: '20',
     });
+    if (pages === null) continue; // falha de rede: tenta a próxima consulta
+    respondeu = true;
     const palavras = palavrasDe(q);
     for (const p of pages) {
       const nota = notaFoto(p, palavras);
@@ -191,7 +196,9 @@ export async function buscarFoto(consultas: string[]): Promise<FotoReal | null> 
     }
     if (melhor && melhor.nota >= 8) break; // já achou foto de destaque
   }
-  return melhor ? toFoto(melhor.page) : null;
+  if (melhor) return toFoto(melhor.page);
+  // undefined = o Commons não respondeu (tentar de novo depois); null = respondeu e não há foto boa
+  return respondeu ? null : undefined;
 }
 
 async function lerCache(key: string): Promise<FotoReal | null | undefined> {
@@ -212,8 +219,11 @@ async function lerCache(key: string): Promise<FotoReal | null | undefined> {
   return undefined;
 }
 
-async function gravarCache(key: string, foto: FotoReal | null) {
-  mem.set(key, { at: Date.now(), foto });
+async function gravarCache(key: string, foto: FotoReal | null | undefined) {
+  if (foto === undefined) return; // falha temporária: não guarda nada
+  // "Sem foto" vale só 6 horas (TTL de 30 dias - 6h = guarda como se tivesse sido salvo há quase 30 dias)
+  mem.set(key, { at: foto ? Date.now() : Date.now() - TTL_MS + 6 * 3600000, foto });
+  if (mem.size > 800) mem.delete(mem.keys().next().value as string);
   if (!foto) return;
   try {
     await adminDb.collection('photo_cache').doc(key).set({ foto, savedAt: new Date().toISOString() });
@@ -227,15 +237,19 @@ const keyOf = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g
 /** Foto real de um destino (slug da Vitrine do Brasil ou do catálogo). */
 export async function fotoDoDestino(slugOuNome: string): Promise<FotoReal | null> {
   const slug = keyOf(slugOuNome);
-  // 1) troca manual feita pelo Admin
-  try {
-    const ov = await adminDb.collection('photo_overrides').doc(slug).get();
-    if (ov.exists) {
-      const d = ov.data() as { foto?: FotoReal };
-      if (d.foto?.url1280) return d.foto;
+  // 1) troca manual feita pelo Admin (lida no banco no máximo a cada 10 minutos por slug)
+  const ovMem = overridesMem.get(slug);
+  if (ovMem && Date.now() - ovMem.at < 600000) {
+    if (ovMem.foto) return ovMem.foto;
+  } else {
+    try {
+      const ov = await adminDb.collection('photo_overrides').doc(slug).get();
+      const f = ov.exists ? ((ov.data() as { foto?: FotoReal }).foto ?? null) : null;
+      overridesMem.set(slug, { at: Date.now(), foto: f?.url1280 ? f : null });
+      if (f?.url1280) return f;
+    } catch {
+      // segue
     }
-  } catch {
-    // segue
   }
   const key = `dest-${slug}`;
   const cached = await lerCache(key);
@@ -249,7 +263,7 @@ export async function fotoDoDestino(slugOuNome: string): Promise<FotoReal | null
     : [`${nome} Brasil`];
   const foto = await buscarFoto(consultas);
   await gravarCache(key, foto);
-  return foto;
+  return foto ?? null;
 }
 
 /** Fotos dos dois carrosséis do topo. */
@@ -261,8 +275,9 @@ export async function fotosDoCarrossel(): Promise<{ top: FotoCarrossel[]; bottom
         const key = `car-${keyOf(item.file)}`;
         let foto = await lerCache(key);
         if (foto === undefined) {
-          foto = (await fotoPorArquivo(item.file)) ?? (await buscarFoto([item.busca]));
-          await gravarCache(key, foto);
+          const achada = (await fotoPorArquivo(item.file)) ?? (await buscarFoto([item.busca]));
+          await gravarCache(key, achada);
+          foto = achada ?? null;
         }
         return foto ? { ...foto, label: item.label, local: item.local, slug: item.slug } : null;
       })
@@ -275,16 +290,18 @@ export async function fotosDoCarrossel(): Promise<{ top: FotoCarrossel[]; bottom
 }
 
 /** Fotos de vários destinos de uma vez (Vitrine do Brasil), com no máximo 6 buscas ao mesmo tempo. */
-export async function fotosDosDestinos(slugs: string[]): Promise<Record<string, FotoReal | null>> {
+export async function fotosDosDestinos(slugs: string[], prazoMs = 40000): Promise<Record<string, FotoReal | null>> {
   const out: Record<string, FotoReal | null> = {};
+  const limite = Date.now() + prazoMs;
   let i = 0;
   const worker = async () => {
-    while (i < slugs.length) {
+    // Para de começar buscas novas perto do limite de tempo da função (o que faltar vem na próxima visita).
+    while (i < slugs.length && Date.now() < limite) {
       const s = slugs[i++];
       out[s] = await fotoDoDestino(s).catch(() => null);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(6, slugs.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(8, slugs.length) }, worker));
   return out;
 }
 
@@ -297,6 +314,7 @@ export async function definirFotoDoDestino(slug: string, arquivoOuLink: string):
   if (!foto) return null;
   await adminDb.collection('photo_overrides').doc(keyOf(slug)).set({ foto, updatedAt: new Date().toISOString() });
   mem.delete(`dest-${keyOf(slug)}`);
+  overridesMem.set(keyOf(slug), { at: Date.now(), foto });
   return foto;
 }
 
@@ -331,7 +349,7 @@ export async function trocarPorFotosReais<T extends Record<string, unknown>>(
   let fotos: Record<string, FotoReal | null> = {};
   if (slugs.length) {
     fotos = await Promise.race([
-      fotosDosDestinos(slugs),
+      fotosDosDestinos(slugs, Math.max(2000, tempoMaxMs - 1000)),
       new Promise<Record<string, FotoReal | null>>((r) => setTimeout(() => r({}), tempoMaxMs)),
     ]);
   }

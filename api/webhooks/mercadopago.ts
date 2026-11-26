@@ -19,7 +19,8 @@ import {
   getSellerAccessToken,
   mpGet,
 } from '../_lib/mp-marketplace.js';
-import { verifyMercadoPagoWebhookSignature } from '../_lib/payment.js';
+import { refundMercadoPagoPayment, verifyMercadoPagoWebhookSignature } from '../_lib/payment.js';
+import { lerVaga } from '../_lib/reservas.js';
 import { recordImmutableLedgerEntry } from '../_lib/pricing.js';
 
 export interface ReconcileMercadoPagoInput {
@@ -94,9 +95,41 @@ export async function reconcileMercadoPagoPayment(
     bookingCode: string;
     userId: number;
     userUid?: string;
+    listingId: number;
+    merchantId?: number;
+    slotId?: number | null;
+    guestsCount: number;
     status: string;
     grossAmountCents: number;
+    commissionCents?: number;
+    netMerchantCents?: number;
+    paymentRef?: string | null;
   };
+  const sellerTokenDaReserva = async () => {
+    const mId = booking.merchantId ?? Number((await adminDb.collection('listings').doc(String(booking.listingId)).get()).data()?.merchantId);
+    return Number.isFinite(mId) ? getSellerAccessToken(Number(mId)) : null;
+  };
+
+  // Estorno, contestação (chargeback) ou cancelamento de um pagamento que confirmou a reserva.
+  if (['refunded', 'charged_back', 'cancelled', 'in_mediation'].includes(mpStatus)) {
+    if (booking.status !== 'confirmed' || String(booking.paymentRef ?? '') !== String(paymentId)) {
+      return { confirmed: false, entityType: 'booking', reason: `ignored_${mpStatus}` };
+    }
+    const novo = mpStatus === 'refunded' || mpStatus === 'cancelled' ? 'refunded' : 'disputed';
+    await adminDb.runTransaction(async (tx) => {
+      const vaga = await lerVaga(tx, booking.slotId);
+      tx.update(bookingDoc.ref, { status: novo, updatedAt: new Date().toISOString(), paymentIssue: mpStatus });
+      tx.set(adminDb.collection('payments').doc(String(booking.id)), { status: novo, updatedAt: new Date().toISOString() }, { merge: true });
+      if (vaga && novo === 'refunded') tx.update(vaga.ref, { availableSpots: vaga.disponiveis + Number(booking.guestsCount || 0) });
+    });
+    await recordAuditLog({
+      action: 'PAYMENT_REVERSED_WEBHOOK',
+      entityType: 'booking',
+      entityId: booking.bookingCode,
+      details: { mpStatus, paymentId },
+    });
+    return { confirmed: false, entityType: 'booking', reason: `booking_${novo}` };
+  }
 
   const check = isExactApprovedPendingPayment({
     currentStatus: booking.status,
@@ -106,6 +139,23 @@ export async function reconcileMercadoPagoPayment(
   });
 
   if (!check.ok) {
+    // Dinheiro aprovado que não pode confirmar a reserva (reserva vencida/cancelada, pagamento em dobro
+    // ou valor diferente): devolve automaticamente para o cliente não ficar no prejuízo.
+    const pagamentoRepetido = booking.status === 'confirmed' && String(booking.paymentRef ?? '') === String(paymentId);
+    if (mpStatus === 'approved' && !pagamentoRepetido) {
+      const token = await sellerTokenDaReserva();
+      const devolvido = token ? await refundMercadoPagoPayment(String(paymentId), token) : false;
+      await bookingDoc.ref.set(
+        { paymentIssue: `${check.reason}:${devolvido ? 'refunded' : 'refund_pending'}`, orphanPaymentRef: String(paymentId) },
+        { merge: true }
+      );
+      await recordAuditLog({
+        action: devolvido ? 'ORPHAN_PAYMENT_REFUNDED' : 'ORPHAN_PAYMENT_NEEDS_REFUND',
+        entityType: 'booking',
+        entityId: booking.bookingCode,
+        details: { paymentId, reason: check.reason },
+      });
+    }
     return { confirmed: false, entityType: 'booking', reason: check.reason };
   }
 
@@ -147,6 +197,26 @@ export async function reconcileMercadoPagoPayment(
   if (!updated) {
     return { confirmed: false, entityType: 'booking', reason: 'concurrent_update' };
   }
+
+  // Livro-caixa só com venda realmente paga.
+  await recordImmutableLedgerEntry({
+    operationType: 'booking_charge',
+    referenceCode: booking.bookingCode,
+    category: 'bookings',
+    breakdown: {
+      ruleCode: 'MARKETPLACE-BOOKING',
+      ruleName: 'Reserva paga (split Mercado Pago)',
+      supplierCostCents: Number(booking.netMerchantCents ?? 0),
+      platformRemunerationCents: Number(booking.commissionCents ?? 0),
+      paymentFeeCents: 0,
+      taxCents: 0,
+      discountCents: 0,
+      finalClientCents: booking.grossAmountCents,
+      merchantPayoutCents: Number(booking.netMerchantCents ?? 0),
+      estimatedMarginCents: Number(booking.commissionCents ?? 0),
+    },
+    idempotencyKey: `booking-${booking.bookingCode}`,
+  }).catch((e) => console.error('ledger error:', e));
 
   if (booking.userUid) {
     const notifId = await nextSeqId('notifications');

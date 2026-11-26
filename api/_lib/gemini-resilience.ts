@@ -343,6 +343,10 @@ export interface ResilientGeminiOptions {
   preferredModels?: string[];
   timeoutMs?: number;
   retriesPerRoute?: number;
+  /** Tempo máximo TOTAL (todas as tentativas). Padrão: 2× o timeout + 2 s, até 50 s. */
+  deadlineMs?: number;
+  /** Usa só os modelos pedidos (sem acrescentar a lista padrão). */
+  strictModels?: boolean;
   // Injectable for unit tests; never exposed to HTTP inputs
   _clientFactory?: (apiKey: string) => {
     models: {
@@ -391,8 +395,12 @@ export async function generateResilientContent(
   }
 
   globalTotalRequests += 1;
-  const models = resolveGeminiModelCascade(opts.preferredModels);
+  const models =
+    opts.strictModels && opts.preferredModels?.length
+      ? resolveGeminiModelCascade(opts.preferredModels).filter((m) => opts.preferredModels!.includes(m))
+      : resolveGeminiModelCascade(opts.preferredModels);
   const timeoutMs = Math.max(2000, Math.min(30_000, opts.timeoutMs ?? 12_000));
+  const limite = Date.now() + Math.max(3000, Math.min(50_000, opts.deadlineMs ?? timeoutMs * 2 + 2000));
   const retriesPerRoute = Math.max(0, Math.min(2, opts.retriesPerRoute ?? 1));
   const clientFactory = opts._clientFactory || defaultClientFactory;
   const sleepFn = opts._sleepFn || sleep;
@@ -408,8 +416,8 @@ export async function generateResilientContent(
   const eligible = routePlan.filter(
     (r) => getEffectiveCircuitState(getOrCreateCircuit(r.model, r.key.slot), now) !== 'OPEN'
   );
-  // If all circuits are OPEN, allow half-open probe on the cascade rather than starving completely
-  const candidates = eligible.length > 0 ? eligible : routePlan;
+  // Todos os circuitos abertos (Gemini fora): testa só UMA rota e falha rápido, sem segurar o cliente.
+  const candidates = eligible.length > 0 ? eligible : routePlan.slice(0, 1);
 
   const attemptedRoutes: string[] = [];
   let attempts = 0;
@@ -421,7 +429,10 @@ export async function generateResilientContent(
     const circuit = getOrCreateCircuit(model, key.slot);
     const ai = clientFactory(key.apiKey);
 
+    if (limite - Date.now() < 1500) break;
     for (let retry = 0; retry <= retriesPerRoute; retry++) {
+      const restante = limite - Date.now();
+      if (restante < 1500) break;
       attempts += 1;
       attemptedRoutes.push(circuit.routeId);
       const started = Date.now();
@@ -437,7 +448,7 @@ export async function generateResilientContent(
                 abortSignal: signal,
               },
             }),
-          timeoutMs
+          Math.min(timeoutMs, restante)
         );
 
         const text = (response.text ?? '').trim();
@@ -513,15 +524,21 @@ export async function generateResilientJson<T>(
   const models = resolveGeminiModelCascade(opts.preferredModels);
   const attempted: string[] = [];
   let totalAttempts = 0;
+  const timeoutJson = Math.max(2000, Math.min(30_000, opts.timeoutMs ?? 12_000));
+  const limiteJson = Date.now() + Math.max(3000, Math.min(50_000, opts.deadlineMs ?? timeoutJson * 2 + 2000));
 
   // Try each model tier cleanly so invalid/truncated JSON on one tier seamlessly fails over to the next
   for (let idx = 0; idx < models.length; idx++) {
     const model = models[idx];
+    const restante = limiteJson - Date.now();
+    if (restante < 2000) break;
     try {
       const result = await generateResilientContent({
         ...opts,
         preferredModels: [model],
+        strictModels: true,
         retriesPerRoute: 1,
+        deadlineMs: restante,
       });
       totalAttempts += result.attempts;
       attempted.push(`${result.keySlotUsed}:${result.modelUsed}`);
@@ -541,7 +558,7 @@ export async function generateResilientJson<T>(
         latencyMs: result.latencyMs,
       };
     } catch (err) {
-      if (idx === models.length - 1) {
+      if (idx === models.length - 1 || limiteJson - Date.now() < 2000) {
         if (err instanceof GeminiResilienceError) throw err;
         throw new GeminiResilienceError(
           `Falha ao obter resposta JSON válida após failover (${

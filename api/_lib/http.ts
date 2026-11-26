@@ -33,6 +33,9 @@ export function getHeader(req: ApiRequest, name: string): string | undefined {
 }
 
 export function getClientIp(req: ApiRequest): string {
+  // Na Vercel, x-real-ip / x-vercel-forwarded-for vêm da própria plataforma (o cliente não falsifica).
+  const real = getHeader(req, 'x-vercel-forwarded-for') || getHeader(req, 'x-real-ip');
+  if (real) return real.split(',')[0].trim();
   const fwd = getHeader(req, 'x-forwarded-for');
   if (fwd) return fwd.split(',')[0].trim();
   return req.socket?.remoteAddress || 'unknown';
@@ -108,9 +111,11 @@ export async function parseJsonBody<T = Record<string, unknown>>(req: ApiRequest
   }
 }
 
-export function sendJson(res: ApiResponse, statusCode: number, data: unknown): void {
+export function sendJson(res: ApiResponse, statusCode: number, data: unknown, cacheControl?: string): void {
   if (!res.headersSent) {
     applySecurityHeaders({ headers: {} } as ApiRequest, res);
+    // Respostas públicas que podem ficar no CDN (ex.: fotos) informam o próprio cache.
+    if (cacheControl) res.setHeader('Cache-Control', cacheControl);
   }
   if (typeof res.status === 'function' && typeof res.json === 'function') {
     const r = res.status(statusCode);
