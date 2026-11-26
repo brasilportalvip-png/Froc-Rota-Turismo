@@ -1,5 +1,6 @@
 import { duffelMode, isMadrugada, searchDuffelOffers } from './duffel.js';
 import { getBrlRate } from './fx.js';
+import { adminDb } from './firebase-admin.js';
 import { computePriceFromRule, resolvePricingRule } from './pricing.js';
 
 export interface TravelIntegrationStatus {
@@ -295,4 +296,70 @@ export function publicFlightResult(result: Record<string, unknown>) {
     radarOpportunities: clean(result.radarOpportunities),
     message: typeof result.message === 'string' ? result.message : undefined,
   };
+}
+
+
+/**
+ * Semáforo de preços: menor preço final (R$) de cada dia, 3 dias antes e 3 depois da data pesquisada.
+ * Guarda o resultado por 3 horas para não repetir a mesma consulta na companhia aérea.
+ */
+export async function precosDosDiasVizinhos(params: {
+  originIata: string;
+  destinationIata: string;
+  departureDate: string;
+  returnDate?: string;
+  adults: number;
+}): Promise<{ available: boolean; dias: Array<{ date: string; minCents: number | null }> }> {
+  if (!process.env.DUFFEL_ACCESS_TOKEN) return { available: false, dias: [] };
+  const o = params.originIata.toUpperCase().slice(0, 3);
+  const d = params.destinationIata.toUpperCase().slice(0, 3);
+  const base = Date.parse(`${params.departureDate}T12:00:00Z`);
+  const estadia = params.returnDate ? Math.round((Date.parse(`${params.returnDate}T12:00:00Z`) - base) / 86400000) : null;
+  const hoje = new Date().toISOString().slice(0, 10);
+  const datas: string[] = [];
+  for (let i = -3; i <= 3; i++) {
+    const dt = new Date(base + i * 86400000).toISOString().slice(0, 10);
+    if (dt > hoje) datas.push(dt);
+  }
+  const umDia = async (date: string): Promise<{ date: string; minCents: number | null }> => {
+    const volta = estadia !== null && estadia >= 0 ? new Date(Date.parse(`${date}T12:00:00Z`) + estadia * 86400000).toISOString().slice(0, 10) : undefined;
+    const key = `${o}-${d}-${date}-${volta ?? 'ida'}-${params.adults}`;
+    try {
+      const c = await adminDb.collection('flight_price_cache').doc(key).get();
+      if (c.exists) {
+        const v = c.data() as { minCents: number | null; at: string };
+        if (Date.now() - Date.parse(v.at) < 3 * 3600000) return { date, minCents: v.minCents };
+      }
+    } catch {
+      // segue sem cache
+    }
+    try {
+      const r = await searchLiveFlightsIfConfigured({
+        originIata: o,
+        destinationIata: d,
+        departureDate: date,
+        returnDate: volta,
+        tripType: volta ? 'round_trip' : 'one_way',
+        adults: params.adults,
+      });
+      const precos = r.offers.map((x) => Number((x as { finalClientCents?: number | null }).finalClientCents)).filter((x) => x > 0);
+      const minCents = precos.length ? Math.min(...precos) : null;
+      await adminDb.collection('flight_price_cache').doc(key).set({ minCents, at: new Date().toISOString() }).catch(() => undefined);
+      return { date, minCents };
+    } catch {
+      return { date, minCents: null };
+    }
+  };
+  // no máximo 4 consultas ao mesmo tempo
+  const out: Array<{ date: string; minCents: number | null }> = new Array(datas.length);
+  let i = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(4, datas.length) }, async () => {
+      while (i < datas.length) {
+        const k = i++;
+        out[k] = await umDia(datas[k]);
+      }
+    })
+  );
+  return { available: true, dias: out };
 }

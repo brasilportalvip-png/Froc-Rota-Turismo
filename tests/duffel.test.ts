@@ -56,3 +56,19 @@ test('Câmbio: usa a última cotação de venda do Banco Central (PTAX)', async 
   );
   assert.equal(pickLatestSellRate([]), null);
 });
+
+test('Passagens: cliente digita a cidade (com ou sem acento) e o semáforo pinta os dias', async () => {
+  const { buscarAeroportos, rotuloAeroporto, acharAeroporto, semaforoPrecos } = await import('../api/_lib/aeroportos.ts');
+  assert.equal(rotuloAeroporto(buscarAeroportos('São Paulo')[0]), 'São Paulo - SP (Todos os aeroportos)');
+  assert.equal(rotuloAeroporto(buscarAeroportos('natal')[0]), 'Natal - RN (NAT)');
+  assert.equal(buscarAeroportos('belo horizonte')[0].codigo, 'BHZ');
+  assert.equal(buscarAeroportos('galeao')[0].codigo, 'GIG');
+  assert.equal(acharAeroporto('rec')?.cidade, 'Recife');
+  const cores = semaforoPrecos([
+    { date: '2027-01-10', minCents: 50000 },
+    { date: '2027-01-11', minCents: 100000 },
+    { date: '2027-01-12', minCents: 150000 },
+    { date: '2027-01-13', minCents: null },
+  ]).map((d) => d.cor);
+  assert.deepEqual(cores, ['verde', 'laranja', 'vermelho', null]);
+});

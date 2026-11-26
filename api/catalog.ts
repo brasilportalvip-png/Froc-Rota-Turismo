@@ -18,7 +18,8 @@ import {
 } from './_lib/http.js';
 import { computePriceFromRule, resolvePricingRule } from './_lib/pricing.js';
 import { ensureSeeded } from './_lib/seed.js';
-import { getTravelIntegrationsStatus, publicFlightResult, searchLiveFlightsIfConfigured } from './_lib/travel.js';
+import { getTravelIntegrationsStatus, precosDosDiasVizinhos, publicFlightResult, searchLiveFlightsIfConfigured } from './_lib/travel.js';
+import { semaforoPrecos } from './_lib/aeroportos.js';
 
 interface DestDoc extends Record<string, unknown> {
   id: number;
@@ -509,6 +510,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       (i) => i.configured && /duffel|amadeus/i.test(i.provider)
     );
     sendJson(res, 200, { flightSearchAvailable: flights });
+    return;
+  }
+
+  // POST /api/travel/calendar — semáforo de preços (verde/laranja/vermelho) nos dias perto da data escolhida
+  if (req.method === 'POST' && route === '/travel/calendar') {
+    if (!checkRateLimit(req, res, 'travel:calendar', 10, 60000)) return;
+    try {
+      const body = await parseJsonBody<{ originIata?: string; destinationIata?: string; departureDate?: string; returnDate?: string; adults?: number }>(req);
+      const o = String(body.originIata || '').toUpperCase();
+      const d = String(body.destinationIata || '').toUpperCase();
+      const dep = String(body.departureDate || '');
+      const ret = body.returnDate ? String(body.returnDate) : undefined;
+      if (!/^[A-Z]{3}$/.test(o) || !/^[A-Z]{3}$/.test(d) || !/^\d{4}-\d{2}-\d{2}$/.test(dep) || (ret && !/^\d{4}-\d{2}-\d{2}$/.test(ret))) {
+        sendJson(res, 400, { error: 'Informe origem, destino e data.' });
+        return;
+      }
+      const r = await precosDosDiasVizinhos({ originIata: o, destinationIata: d, departureDate: dep, returnDate: ret, adults: Math.max(1, Math.min(9, Number(body.adults) || 1)) });
+      sendJson(res, 200, { available: r.available, dias: semaforoPrecos(r.dias) });
+    } catch (error) {
+      console.error('POST /api/travel/calendar error:', error);
+      sendJson(res, 502, { error: 'Não foi possível comparar os preços agora.' });
+    }
     return;
   }
 

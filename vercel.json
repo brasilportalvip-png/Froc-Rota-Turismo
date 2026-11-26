@@ -121,6 +121,10 @@
       "destination": "/api/catalog?route=/travel/status"
     },
     {
+      "source": "/api/travel/calendar",
+      "destination": "/api/catalog?route=/travel/calendar"
+    },
+    {
       "source": "/api/travel/search",
       "destination": "/api/catalog?route=/travel/search"
     },
