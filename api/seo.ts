@@ -410,7 +410,7 @@ ${more.length ? `<h2>Mais do blog</h2>${postCards(more)}` : ''}`,
               publisher: {
                 '@type': 'Organization',
                 name: SITE_NAME,
-                logo: { '@type': 'ImageObject', url: `${base}/pwa-512x512.png` },
+                logo: { '@type': 'ImageObject', url: `${base}/logo-froc-rota.png` },
               },
             },
           ],
@@ -601,7 +601,7 @@ ${
           bodyHtml: pages.body,
           jsonLd:
             route === 'sobre'
-              ? [{ '@context': 'https://schema.org', '@type': 'Organization', name: SITE_NAME, url: base, logo: `${base}/pwa-512x512.png` }]
+              ? [{ '@context': 'https://schema.org', '@type': 'Organization', name: SITE_NAME, url: base, logo: `${base}/logo-froc-rota.png` }]
               : [],
         }),
         'text/html; charset=utf-8',

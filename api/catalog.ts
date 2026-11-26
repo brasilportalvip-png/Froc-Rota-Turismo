@@ -2,7 +2,7 @@ import { DESTINOS_BRASIL } from './_lib/brasil-destinos.js';
 import { adminDb } from './_lib/firebase-admin.js';
 import { buildIntentSuggestion } from './_lib/intent.js';
 import { askFrocRotaAI } from './_lib/ai.js';
-import { optionalAuthenticateRequest } from './_lib/auth.js';
+import { optionalAuthenticateRequest, requireAdminContext } from './_lib/auth.js';
 import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.js';
 import { GeminiResilienceError } from './_lib/gemini-resilience.js';
 import {
@@ -15,10 +15,9 @@ import {
   parseJsonBody,
   sendJson,
 } from './_lib/http.js';
-import { getPaymentGatewayStatus } from './_lib/payment.js';
 import { computePriceFromRule, resolvePricingRule } from './_lib/pricing.js';
 import { ensureSeeded } from './_lib/seed.js';
-import { getTravelIntegrationsStatus, searchLiveFlightsIfConfigured } from './_lib/travel.js';
+import { getTravelIntegrationsStatus, publicFlightResult, searchLiveFlightsIfConfigured } from './_lib/travel.js';
 
 interface DestDoc extends Record<string, unknown> {
   id: number;
@@ -419,8 +418,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   // POST /api/pricing/preview
+  // Regras de preço/markup são confidenciais: só a equipe (painel Admin) consulta.
   if (req.method === 'POST' && route === '/pricing/preview') {
     if (!checkRateLimit(req, res, 'pricing:preview', 40, 60000)) return;
+    const staff = await requireAdminContext(req, res);
+    if (!staff) return;
     try {
       const body = await parseJsonBody<{
         category?: string;
@@ -453,10 +455,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   // GET /api/travel/status
   if (req.method === 'GET' && route === '/travel/status') {
-    sendJson(res, 200, {
-      integrations: getTravelIntegrationsStatus(),
-      payments: getPaymentGatewayStatus(),
-    });
+    // Público vê só se a busca de voos está disponível; detalhes das integrações ficam no Admin.
+    const flights = getTravelIntegrationsStatus().some(
+      (i) => i.configured && /duffel|amadeus/i.test(i.provider)
+    );
+    sendJson(res, 200, { flightSearchAvailable: flights });
     return;
   }
 
@@ -504,7 +507,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         maxPriceBrl: maxPriceBrl ? Number(maxPriceBrl) : undefined,
         madrugadaOnly: Boolean(madrugadaOnly),
       });
-      sendJson(res, 200, result);
+      sendJson(res, 200, publicFlightResult(result));
     } catch (error) {
       console.error('POST /api/travel/search error:', error);
       sendJson(res, 502, { error: 'Erro ao consultar provedor de passagens aéreas.' });
@@ -586,3 +589,4 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   sendJson(res, 404, { error: 'Rota de catálogo não encontrada.' });
 }
+

@@ -7,13 +7,16 @@ import { hasAdminPermission, isVerifiedAdminIdentity } from '../api/_lib/auth.ts
 
 const read = (p: string) => fs.readFileSync(p, 'utf8');
 
-test('A1: chat em tempo real usa Firestore onSnapshot isolado por ownerUid/staff sem broadcast público', () => {
+test('A1: chat usa só a API do servidor (dono conferido lá), sem listener do Firestore no navegador', () => {
   const drawer = read('src/components/RealtimeChatDrawer.tsx');
-  assert.match(drawer, /onSnapshot\(/);
-  assert.match(drawer, /where\('ownerUid', '==', firebaseUser\.uid\)/);
-  assert.match(drawer, /where\('conversationOwnerUid', '==', firebaseUser\.uid\)/);
+  assert.equal(/onSnapshot|firebase\/firestore|handleFirestoreError/.test(drawer), false);
+  assert.match(drawer, /\/api\/chat\/conversations/);
+  assert.match(drawer, /setInterval/);
   assert.equal(drawer.includes('ws://'), false);
   assert.equal(drawer.includes('wss://'), false);
+  const tourist = read('api/tourist.ts');
+  assert.match(tourist, /where\('ownerUid', '==', user\.uid\)/);
+  assert.match(tourist, /conv\.ownerUid !== user\.uid && conv\.ownerUserId !== user\.id && !isStaff/);
 });
 
 test('A2: toda rota /admin/ em api/admin.ts exige requireAdminContext com permissão ou Master Admin', () => {

@@ -1,20 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { BellRing, Calculator, ExternalLink, Moon, Plane, ShieldCheck } from 'lucide-react';
+import { BellRing, Moon, Plane, ShieldCheck } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { formatMoney, TRANSLATIONS } from '../i18n/translations.ts';
-import { PriceBreakdown } from '../types.ts';
 
-interface TravelIntegration {
-  provider: string;
-  category: string;
-  configured: boolean;
-  docsUrl: string;
-  requiredEnvVars: string[];
-  notes: string;
-}
 
 export const TravelAndConciergeSection: React.FC = () => {
-  const { apiFetch, currency, dbUser, language, requestLogin, notify } = useApp();
+  const { apiFetch, dbUser, language, requestLogin, notify } = useApp();
   const t = TRANSLATIONS[language];
 
   // Travel search state
@@ -48,18 +39,8 @@ export const TravelAndConciergeSection: React.FC = () => {
       flightNumbers?: string[];
       returnDepartureAt?: string | null;
       finalClientCents?: number | null;
-      platformFeeCents?: number | null;
-      fxRate?: number | null;
-      fxDate?: string | null;
     }>;
-    integrations: TravelIntegration[];
   } | null>(null);
-  const [integrations, setIntegrations] = useState<TravelIntegration[]>([]);
-
-  // Transparent pricing simulator (uses real backend pricing rules)
-  const [simCategory, setSimCategory] = useState<'flights' | 'accommodation' | 'experience'>('flights');
-  const [simSupplierBrl, setSimSupplierBrl] = useState('1000');
-  const [simBreakdown, setSimBreakdown] = useState<PriceBreakdown | null>(null);
 
   // Concierge request state
   const [cOrigin, setCOrigin] = useState('São Paulo, SP');
@@ -106,27 +87,6 @@ export const TravelAndConciergeSection: React.FC = () => {
     };
   }, []);
   const [conciergeCode, setConciergeCode] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch('/api/travel/status')
-      .then((r) => r.json())
-      .then((d) => setIntegrations(d.integrations || []))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const costCents = Math.max(0, Math.round(Number(simSupplierBrl || 0) * 100));
-    fetch('/api/pricing/preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ category: simCategory, supplierCostCents: costCents }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d?.breakdown) setSimBreakdown(d.breakdown);
-      })
-      .catch(() => {});
-  }, [simCategory, simSupplierBrl]);
 
   const handleSearchFlights = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -210,15 +170,14 @@ export const TravelAndConciergeSection: React.FC = () => {
       <section id="viagens" className="scroll-mt-24">
         <div className="max-w-3xl mb-8">
           <div className="text-xs font-bold uppercase tracking-wider text-[#FF1493]">
-            ✈️ Módulo 05 · Passagens Aéreas, Radar da Madrugada &amp; Transparência Tarifária
+            ✈️ Passagens aéreas em reais
           </div>
           <h2 className="text-3xl md:text-4xl font-extrabold text-[#111111] mt-1 tracking-tight">
             {t.travelsTitle}
           </h2>
           <p className="text-sm text-[#111111]/75 mt-2 leading-relaxed">
-            Conectado ao motor financeiro configurável da Froc Rota e à API de voos oficiais
-            (Amadeus / Duffel) com prevenção anti-duplicidade via Idempotency-Key. Jamais exibimos
-            tarifas fictícias sem resposta real do provedor.
+            Compare voos com o preço final em reais, já com tudo incluído. As tarifas vêm direto
+            das companhias aéreas no momento da busca — nada de preço inventado.
           </p>
         </div>
 
@@ -348,7 +307,7 @@ export const TravelAndConciergeSection: React.FC = () => {
                 <div className="space-y-2">
                   <div className="font-bold text-[#111111] flex items-center gap-2">
                     <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#39FF14]" />
-                    <span>Ofertas reais retornadas via {flightResponse.provider}:</span>
+                    <span>Voos encontrados:</span>
                   </div>
                   {flightResponse.mode === 'test' && (
                     <div className="p-2.5 rounded-lg bg-[#FFD700]/20 border border-[#111111]/20 font-semibold text-[#111111]">
@@ -385,15 +344,7 @@ export const TravelAndConciergeSection: React.FC = () => {
                               <div className="text-sm font-extrabold text-[#111111]">
                                 {formatMoney(offer.finalClientCents, 'BRL')}
                               </div>
-                              <div className="text-[10px] text-[#111111]/65">
-                                inclui taxa Froc Rota {formatMoney(offer.platformFeeCents ?? 0, 'BRL')}
-                              </div>
-                              {offer.fxRate ? (
-                                <div className="text-[10px] text-[#111111]/65">
-                                  tarifa {offer.price?.currency} {offer.price?.total} × câmbio BC{' '}
-                                  {offer.fxRate.toFixed(4).replace('.', ',')} ({offer.fxDate?.split('-').reverse().join('/')})
-                                </div>
-                              ) : null}
+                              <div className="text-[10px] text-[#111111]/65">preço final, taxas incluídas</div>
                             </>
                           ) : (
                             <div className="text-sm font-extrabold text-[#111111]">
@@ -407,91 +358,12 @@ export const TravelAndConciergeSection: React.FC = () => {
                 </div>
               ) : (
                 <div className="text-[#111111]/80">
-                  <strong className="text-[#111111]">Status real da integração aérea: </strong>
                   {flightResponse.message}
                 </div>
               )}
             </div>
           )}
 
-          {/* Live Transparent Pricing Simulator */}
-          <div className="froc-gold-frame p-4 md:p-5 rounded-xl bg-white space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-xs font-extrabold text-[#111111] inline-flex items-center gap-1.5">
-                <Calculator className="w-4 h-4 text-[#111111]" />
-                <span>⚡ Simulador Transparente do Motor de Precificação Froc Rota</span>
-              </div>
-              <div className="flex items-center gap-2 text-xs">
-                <select
-                  value={simCategory}
-                  onChange={(e) => {
-                    const next = e.target.value as typeof simCategory;
-                    setSimCategory(next);
-                    if (next === 'accommodation') setSimSupplierBrl('100');
-                    if (next === 'flights') setSimSupplierBrl('1000');
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg border-2 border-[#111111]/15 bg-white text-xs font-semibold"
-                >
-                  <option value="flights">Passagem Aérea (+R$ 200)</option>
-                  <option value="accommodation">Hospedagem (+R$ 50)</option>
-                  <option value="experience">Passeios / Serviços (12%)</option>
-                </select>
-                <input
-                  type="number"
-                  min={50}
-                  value={simSupplierBrl}
-                  onChange={(e) => setSimSupplierBrl(e.target.value)}
-                  className="w-28 px-2.5 py-1.5 rounded-lg border-2 border-[#111111]/15 bg-white text-xs font-mono-tabular font-bold"
-                />
-              </div>
-            </div>
-            {simBreakdown && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono-tabular pt-1">
-                <div>
-                  <span className="text-[#111111]/60 block">Custo fornecedor</span>
-                  <strong className="text-[#111111]">{formatMoney(simBreakdown.supplierCostCents, currency)}</strong>
-                </div>
-                <div>
-                  <span className="text-[#111111]/60 block">Taxa / Markup Froc Rota</span>
-                  <strong className="text-[#FF1493]">+{formatMoney(simBreakdown.platformRemunerationCents, currency)}</strong>
-                </div>
-                <div>
-                  <span className="text-[#111111]/60 block">Regra aplicada</span>
-                  <strong className="text-[#111111]">{simBreakdown.ruleCode}</strong>
-                </div>
-                <div>
-                  <span className="text-[#111111]/60 block">Valor Final ao Cliente</span>
-                  <strong className="inline-block px-2 py-0.5 rounded bg-[#39FF14] text-[#111111]">
-                    {formatMoney(simBreakdown.finalClientCents, currency)}
-                  </strong>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-[#111111]/10">
-            {integrations.map((item) => (
-              <div
-                key={item.provider}
-                className="p-4 rounded-xl bg-white border-2 border-[#111111]/10 hover:border-[#39FF14] transition-colors text-xs space-y-1.5"
-              >
-                <div className="font-extrabold text-[#111111]">{item.provider}</div>
-                <div className={item.configured ? 'inline-block px-2 py-0.5 rounded bg-[#39FF14] text-[#111111] font-bold text-[10px]' : 'inline-block px-2 py-0.5 rounded bg-[#FFD700] text-[#111111] font-bold text-[10px]'}>
-                  {item.configured ? 'API ativa no servidor' : 'Aguardando credenciais'}
-                </div>
-                <p className="text-[#111111]/70 leading-relaxed">{item.notes}</p>
-                <a
-                  href={item.docsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[#111111] font-bold hover:text-[#FF1493] pt-1"
-                >
-                  <span>Documentação oficial</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -500,7 +372,7 @@ export const TravelAndConciergeSection: React.FC = () => {
         <div className="rounded-2xl bg-[#111111] border-2 border-[#FFD700] text-white p-8 md:p-12 grid grid-cols-1 lg:grid-cols-12 gap-10 items-start shadow-xl">
           <div className="lg:col-span-5 space-y-4">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-[#FFD700] text-[#111111] text-[11px] font-extrabold uppercase tracking-wider">
-              👑 Módulo 06 · Organização Completa Sob Medida
+              👑 Viagem completa sob medida
             </div>
             <h2 className="text-3xl md:text-4xl font-extrabold leading-tight">
               {t.conciergeTitle}

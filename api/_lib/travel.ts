@@ -184,7 +184,7 @@ export async function searchLiveFlightsIfConfigured(params: {
       offers: [],
       radarOpportunities: [],
       message:
-        'Busca de passagens aguardando a chave da Duffel (DUFFEL_ACCESS_TOKEN). Por transparência, tarifas e horários nunca são inventados.',
+        'A busca de passagens está indisponível no momento. Fale com a gente no chat que buscamos o voo para você.',
       integrations: getTravelIntegrationsStatus(),
     };
   }
@@ -266,5 +266,33 @@ export async function searchLiveFlightsIfConfigured(params: {
     offers,
     radarOpportunities: offers.slice(0, 5),
     integrations: getTravelIntegrationsStatus(),
+  };
+}
+
+/**
+ * Resposta pública da busca de voos: só o preço final em reais.
+ * Custo do fornecedor, taxa/markup, câmbio e status das integrações não saem do servidor.
+ */
+export function publicFlightResult(result: Record<string, unknown>) {
+  const clean = (list: unknown) =>
+    Array.isArray(list)
+      ? list.map((raw) => {
+          const o = { ...(raw as Record<string, unknown>) };
+          const hasFinal = typeof o.finalClientCents === 'number' && (o.finalClientCents as number) > 0;
+          delete o.supplierBrlCents;
+          delete o.platformFeeCents;
+          delete o.fxRate;
+          delete o.fxDate;
+          delete o.totalCents;
+          if (hasFinal) delete o.price;
+          return o;
+        })
+      : [];
+  return {
+    connected: Boolean(result.connected),
+    mode: result.mode === 'test' ? 'test' : result.mode === 'live' ? 'live' : undefined,
+    offers: clean(result.offers),
+    radarOpportunities: clean(result.radarOpportunities),
+    message: typeof result.message === 'string' ? result.message : undefined,
   };
 }

@@ -1190,13 +1190,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       if (body.requestHumanHandoff) {
         const sysId = await nextSeqId('chat_messages');
         const handoffText =
-          'Conversa encaminhada em tempo real para um atendente humano da central Froc Rota.';
+          'Pronto! Sua conversa foi encaminhada para um atendente da equipe Froc Rota. A resposta aparece aqui mesmo.';
         const sysMsg = {
           id: sysId,
           conversationId: conv.id,
           conversationOwnerUid: conv.ownerUid,
           senderUid: 'froc-orchestrator',
-          senderName: 'Orquestrador Froc Rota',
+          senderName: 'Central Froc Rota',
           senderRole: 'ai_agent',
           text: handoffText,
           attachmentUrl: null,
@@ -1213,19 +1213,37 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           unreadByStaff: (conv.unreadByStaff || 0) + 1,
         });
       } else if (body.askAi && !isStaff && cleanText) {
+        // A IA recebe as últimas mensagens da conversa para responder com contexto.
+        let aiText = '';
         try {
+          const historySnap = await convRef.collection('messages').get();
+          const history = historySnap.docs
+            .map((d) => d.data() as { createdAt?: string; senderRole?: string; text?: string })
+            .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+            .slice(-7, -1)
+            .map((m) => `${m.senderRole === 'ai_agent' ? 'Assistente' : 'Cliente'}: ${String(m.text || '').slice(0, 180)}`)
+            .join('\n');
           const aiReply = await askFrocRotaAI({
-            query: cleanText,
+            query: history ? `${cleanText}\n\n(Contexto: mensagens anteriores desta conversa)\n${history}` : cleanText,
             language: (user.preferredLang as 'pt' | 'en' | 'es') || 'pt',
           });
+          aiText = String(aiReply.reply || '').trim().slice(0, 2000);
+        } catch (aiError) {
+          console.error('Chat AI reply error:', aiError);
+        }
+        if (!aiText) {
+          aiText =
+            'Recebi sua mensagem! No momento não consegui gerar uma resposta automática. ' +
+            'Toque em "Falar com atendente" e a equipe Froc Rota responde aqui mesmo nesta conversa.';
+        }
+        {
           const aiId = await nextSeqId('chat_messages');
-          const aiText = aiReply.reply.slice(0, 2000);
           const aiMsg = {
             id: aiId,
             conversationId: conv.id,
             conversationOwnerUid: conv.ownerUid,
             senderUid: 'froc-rota-ai',
-            senderName: 'Froc Rota AI Assistant',
+            senderName: 'Assistente Froc Rota',
             senderRole: 'ai_agent',
             text: aiText,
             attachmentUrl: null,
@@ -1235,8 +1253,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           await convRef.collection('messages').doc(String(aiId)).set(aiMsg);
           createdMsgs.push(aiMsg);
           latestPreview = aiText;
-        } catch {
-          // Keep human thread intact when GEMINI_API_KEY is absent
         }
       }
 
@@ -1249,13 +1265,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         unreadByStaff: !isStaff ? (conv.unreadByStaff || 0) + 1 : conv.unreadByStaff || 0,
       });
 
+      // Registro do agente não pode derrubar o envio (a mensagem já foi salva).
       await dispatchAgentTask({
         department: 'Atendimento e Chat',
         triggerType: 'event',
         eventName: body.requestHumanHandoff ? 'CHAT_HUMAN_ESCALATION' : 'CHAT_MESSAGE_PROCESSED',
         title: `Atendimento ${conv.conversationCode} (${conv.subject})`,
         input: { conversationId: conv.id, senderRole },
-      });
+      }).catch((agentError) => console.error('Chat agent log error:', agentError));
 
       sendJson(res, 201, { messages: createdMsgs });
     } catch (error) {
