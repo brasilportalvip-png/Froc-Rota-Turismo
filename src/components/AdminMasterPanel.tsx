@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useRef, useCallback, useEffect, useState } from 'react';
 import {
   Bot,
   Calculator,
@@ -228,6 +228,8 @@ export const AdminMasterPanel: React.FC<{
   const [subLabel, setSubLabel] = useState('Gerente Operacional');
   const [subPerms, setSubPerms] = useState<string[]>(['overview', 'editorial', 'chat']);
 
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const loadAllAdmin = useCallback(async () => {
     try {
       const loaders: Promise<void>[] = [];
@@ -328,9 +330,11 @@ export const AdminMasterPanel: React.FC<{
       await Promise.all(loaders);
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : 'Acesso administrativo negado.', 'error');
-      onClose();
+      // Só fecha o painel se o acesso foi negado de verdade (não por falha passageira de rede/limite).
+      if (/negad|permiss|forbidden|403/i.test(err instanceof Error ? err.message : '')) onCloseRef.current();
     }
-  }, [agentDeptFilter, apiFetch, dbUser?.role, hasAdminPermission, notify, onClose]);
+    // onClose fica fora das dependências (vem como função nova a cada render do App e recarregava o painel sem parar)
+  }, [agentDeptFilter, apiFetch, dbUser?.role, hasAdminPermission, notify]);
 
   useEffect(() => {
     loadAllAdmin();
@@ -864,13 +868,7 @@ export const AdminMasterPanel: React.FC<{
                               <strong>{merchantName}</strong> · {planName} · {subscription.status}
                             </span>
                             <div className="flex gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => handleSubscriptionStatus(subscription.id, 'courtesy')}
-                                className="px-2 py-1 rounded bg-[#ECFDF5] text-[#065F46] font-semibold"
-                              >
-                                Cortesia 30d
-                              </button>
+                              
                               <button
                                 type="button"
                                 onClick={() => handleSubscriptionStatus(subscription.id, 'suspended')}
@@ -1601,7 +1599,7 @@ export const AdminMasterPanel: React.FC<{
             {tab === 'audit' && (
               <div className="space-y-4">
                 <SecurityPinCard
-                  title="Chave Mestra & Proteção RBAC Admin"
+                  title="Senha da conta"
                   onSuccessMessage={(msg) => notify(msg, 'success')}
                 />
                 <div className="space-y-2 max-h-96 overflow-y-auto">

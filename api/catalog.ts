@@ -20,6 +20,7 @@ import { computePriceFromRule, resolvePricingRule } from './_lib/pricing.js';
 import { ensureSeeded } from './_lib/seed.js';
 import { getTravelIntegrationsStatus, precosDosDiasVizinhos, publicFlightResult, searchLiveFlightsIfConfigured } from './_lib/travel.js';
 import { semaforoPrecos } from './_lib/aeroportos.js';
+import { lanceComissaoBps, ordemDoLeilao } from './_lib/leilao.js';
 
 interface DestDoc extends Record<string, unknown> {
   id: number;
@@ -54,6 +55,8 @@ interface ListingDoc extends Record<string, unknown> {
 
 interface MerchantDoc extends Record<string, unknown> {
   id: number;
+  userUid?: string;
+  commissionBidBps?: number;
   tradeName: string;
   verificationStatus: string;
   cadasturNumber?: string | null;
@@ -96,6 +99,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   const route = getRoutePath(req);
+  if (!checkRateLimit(req, res, 'catalog:api', 240, 60000)) return;
   const query = getQuery(req);
 
   // POST /api/intent/suggest — oportunidade personalizada para o destino em que a pessoa está interessada
@@ -203,25 +207,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       }
 
       const destination = destSnap.docs[0].data() as DestDoc;
-      const [listingsSnap, reviewsSnap, users] = await Promise.all([
+      const [listingsSnap, reviewsSnap] = await Promise.all([
         adminDb
           .collection('listings')
           .where('destinationId', '==', destination.id)
           .where('status', '==', 'active')
           .get(),
         adminDb.collection('reviews').where('destinationId', '==', destination.id).get(),
-        getAllDocs<UserDoc>('users'),
       ]);
-
-      const userMap = new Map(users.map((u) => [u.id, u.name]));
-      const destListings = listingsSnap.docs
-        .map((d) => d.data() as ListingDoc)
-        .sort((a, b) => {
-          if (Boolean(b.isFeatured) !== Boolean(a.isFeatured)) {
-            return Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured));
-          }
-          return Number(b.ratingAvg || 0) - Number(a.ratingAvg || 0);
-        });
+      const userMap = await nomesDosAutores(reviewsSnap.docs.map((d) => Number((d.data() as ReviewDoc).userId)));
+      const brutos = listingsSnap.docs.map((d) => d.data() as ListingDoc);
+      const mIds = [...new Set(brutos.map((l) => l.merchantId))];
+      const lances = new Map<number, number>();
+      if (mIds.length) {
+        const ms = await adminDb.getAll(...mIds.map((id) => adminDb.collection('merchants').doc(String(id))));
+        for (const m of ms) if (m.exists) lances.set(Number(m.id), lanceComissaoBps((m.data() as { commissionBidBps?: number }).commissionBidBps));
+      }
+      const destListings = brutos.sort((a, b) =>
+        ordemDoLeilao(
+          { ...a, bidBps: lances.get(a.merchantId) ?? 0 },
+          { ...b, bidBps: lances.get(b.merchantId) ?? 0 }
+        )
+      );
 
       const destReviews = reviewsSnap.docs
         .map((d) => d.data() as ReviewDoc & { hidden?: boolean })
@@ -261,6 +268,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
       let items = allListings
         .filter((l) => l.status === 'active')
+        // Só parceiros reais (com conta no site); exemplos de catálogo nunca aparecem para venda.
+        .filter((l) => Boolean(merchMap.get(l.merchantId)?.userUid))
         .filter((l) => (!moduleType || moduleType === 'all' ? true : l.moduleType === moduleType))
         .filter((l) =>
           destinationId && !Number.isNaN(Number(destinationId))
@@ -300,6 +309,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           if (Boolean(b.isFeatured) !== Boolean(a.isFeatured)) {
             return Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured));
           }
+          // Leilão de comissão: quem oferece mais aparece primeiro
+          const lb = lanceComissaoBps(merchMap.get(b.merchantId)?.commissionBidBps);
+          const la = lanceComissaoBps(merchMap.get(a.merchantId)?.commissionBidBps);
+          if (lb !== la) return lb - la;
           return Number(b.ratingAvg || 0) - Number(a.ratingAvg || 0);
         })
         .map((l) => {
@@ -340,20 +353,26 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       }
 
       const listing = listingSnap.docs[0].data() as ListingDoc;
-      const [destSnap, merchantSnap, slotsSnap, reviewsSnap, users] = await Promise.all([
+      if (listing.status !== 'active') {
+        sendJson(res, 404, { error: 'Oferta indisponível no momento.' });
+        return;
+      }
+      const [destSnap, merchantSnap, slotsSnap, reviewsSnap] = await Promise.all([
         adminDb.collection('destinations').doc(String(listing.destinationId)).get(),
         adminDb.collection('merchants').doc(String(listing.merchantId)).get(),
         adminDb.collection('availability_slots').where('listingId', '==', listing.id).get(),
         adminDb.collection('reviews').where('listingId', '==', listing.id).get(),
-        getAllDocs<UserDoc>('users'),
       ]);
 
       const dest = destSnap.exists ? (destSnap.data() as DestDoc) : null;
       const merchant = merchantSnap.exists ? (merchantSnap.data() as MerchantDoc) : null;
-      const userMap = new Map(users.map((u) => [u.id, u.name]));
+      const userMap = await nomesDosAutores(reviewsSnap.docs.map((d) => Number((d.data() as ReviewDoc).userId)));
 
+      // Só horários futuros e com vaga (o cliente não escolhe data que já passou ou esgotada).
+      const hoje = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
       const slots = slotsSnap.docs
-        .map((d) => d.data() as { date: string })
+        .map((d) => d.data() as { date: string; availableSpots?: number })
+        .filter((x) => String(x.date) >= hoje && Number(x.availableSpots ?? 0) > 0)
         .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
       const itemReviews = reviewsSnap.docs
@@ -397,8 +416,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method === 'GET' && route === '/fotos/carrossel') {
     try {
       const fotos = await fotosDoCarrossel();
-      res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=604800');
-      sendJson(res, 200, fotos);
+      sendJson(res, 200, fotos, 'public, s-maxage=86400, stale-while-revalidate=604800');
     } catch (error) {
       console.error('GET /api/fotos/carrossel error:', error);
       sendJson(res, 500, { error: 'Erro ao carregar as fotos.' });
@@ -414,8 +432,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         .filter((x) => TODOS_OS_SLUGS.includes(x))
         .slice(0, 100);
       const fotos = await fotosDosDestinos(pedidos.length ? pedidos : TODOS_OS_SLUGS);
-      res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=604800');
-      sendJson(res, 200, { fotos });
+      sendJson(res, 200, { fotos }, 'public, s-maxage=86400, stale-while-revalidate=604800');
     } catch (error) {
       console.error('GET /api/fotos/destinos error:', error);
       sendJson(res, 500, { error: 'Erro ao carregar as fotos.' });
@@ -424,7 +441,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   if (req.method === 'GET' && route === '/foto') {
-    const slug = String(query.d || '').slice(0, 80);
+    if (!checkRateLimit(req, res, 'catalog:foto', 60, 60000)) return;
+    const pedido = String(query.d || '').toLowerCase();
+    const slug = /^[a-z0-9-]{2,60}$/.test(pedido) ? pedido : '';
     const w = String(query.w || '1280');
     const foto = slug ? await fotoDoDestino(slug).catch(() => null) : null;
     res.statusCode = foto ? 302 : 404;
@@ -471,7 +490,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // Regras de preço/markup são confidenciais: só a equipe (painel Admin) consulta.
   if (req.method === 'POST' && route === '/pricing/preview') {
     if (!checkRateLimit(req, res, 'pricing:preview', 40, 60000)) return;
-    const staff = await requireAdminContext(req, res);
+    const staff = await requireAdminContext(req, res, 'finance');
     if (!staff) return;
     try {
       const body = await parseJsonBody<{
@@ -666,4 +685,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 function slugDoPost(p: Record<string, unknown>): string | null {
   if (p.destinationSlug) return String(p.destinationSlug);
   return detectDestinos(`${p.title || ''} ${p.summary || ''}`, 1)[0]?.destino.slug ?? null;
+}
+
+/** Nome de quem escreveu cada avaliação (lê só esses usuários, nunca a coleção inteira). */
+async function nomesDosAutores(ids: number[]): Promise<Map<number, string>> {
+  const unicos = [...new Set(ids.filter((x) => Number.isFinite(x) && x > 0))];
+  const out = new Map<number, string>();
+  for (let i = 0; i < unicos.length; i += 10) {
+    const snap = await adminDb.collection('users').where('id', 'in', unicos.slice(i, i + 10)).get();
+    for (const d of snap.docs) {
+      const u = d.data() as { id: number; name?: string };
+      out.set(Number(u.id), String(u.name || '').split(' ')[0] || 'Turista');
+    }
+  }
+  return out;
 }

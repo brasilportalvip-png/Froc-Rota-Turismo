@@ -38,10 +38,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     if (job === 'agentes') {
       const r = await runDailyAgentRoutine();
       // Deixa as fotos reais dos 100 destinos prontas (cache de 30 dias), sem segurar a rotina mais de 25 s.
-      const fotos = await Promise.race([
-        fotosDosDestinos(TODOS_OS_SLUGS).then((f) => Object.values(f).filter(Boolean).length),
-        new Promise<number>((ok) => setTimeout(() => ok(-1), 25000)),
-      ]).catch(() => -1);
+      const fotos = await fotosDosDestinos(TODOS_OS_SLUGS, 15000)
+        .then((f) => Object.values(f).filter(Boolean).length)
+        .catch(() => -1);
       sendJson(res, 200, { ok: true, job, result: r, fotosProntas: fotos });
       return;
     }

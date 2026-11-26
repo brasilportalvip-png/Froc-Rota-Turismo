@@ -23,6 +23,8 @@ export function getAppBaseUrl(): string {
   if (process.env.APP_URL) {
     return process.env.APP_URL.replace(/\/+$/, '');
   }
+  // Em produção nunca usar o endereço de cada deploy (muda a cada publicação e quebra webhooks/OAuth).
+  if (process.env.VERCEL_ENV === 'production') return 'https://froc-rota-turismo.vercel.app';
   if (process.env.VERCEL_URL) {
     return `https://${process.env.VERCEL_URL}`.replace(/\/+$/, '');
   }

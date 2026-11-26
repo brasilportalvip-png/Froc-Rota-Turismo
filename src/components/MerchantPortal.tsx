@@ -27,6 +27,7 @@ import {
 } from '../types.ts';
 import { useApp } from '../context/AppContext.tsx';
 import { IdentityVerification } from './IdentityVerification.tsx';
+import { LeilaoComissao } from './LeilaoComissao.tsx';
 import { formatMoney } from '../i18n/translations.ts';
 import { FuturisticModalHeader, SecurityPinCard } from './DesignSystem.tsx';
 
@@ -51,6 +52,32 @@ interface OAuthStatusResponse {
     collectorId: string | null;
   };
 }
+
+const TIPO_PT: Record<string, string> = {
+  experience: 'Passeio/experiência',
+  accommodation: 'Hospedagem',
+  gastronomy: 'Gastronomia',
+  transport: 'Transporte',
+  rentals: 'Aluguel',
+  adventure: 'Aventura',
+  guides: 'Guia',
+  shopping: 'Compras',
+  events: 'Evento',
+};
+const SITUACAO_PT: Record<string, string> = {
+  active: 'No ar',
+  pending: 'Aguardando liberação',
+  paused: 'Pausado',
+  archived: 'Excluído',
+  inactive: 'Fora do ar',
+  pending_payment: 'Aguardando pagamento',
+  confirmed: 'Paga',
+  cancelled: 'Cancelada',
+  expired: 'Não paga (vencida)',
+  refunded: 'Reembolsada',
+  refund_requested: 'Reembolso em andamento',
+  disputed: 'Contestada',
+};
 
 export const MerchantPortal: React.FC<MerchantPortalProps> = ({
   destinations,
@@ -137,6 +164,7 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
   const [campSuggestion, setCampSuggestion] = useState('');
   const [generatingCopy, setGeneratingCopy] = useState(false);
 
+  const [portalError, setPortalError] = useState('');
   const loadPortal = useCallback(async () => {
     setLoading(true);
     try {
@@ -173,16 +201,19 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
         setSubscriptions(subsRes.subscriptions || []);
         setCampaigns(campRes.campaigns || []);
         setOauthStatus(oauthRes);
-        if (!campListingId && dash.listings?.length > 0) {
-          setCampListingId(String(dash.listings[0].id));
+        if (dash.listings?.length > 0) {
+          setCampListingId((atual) => atual || String(dash.listings[0].id));
         }
+        setPortalError('');
       }
     } catch (err) {
       console.error(err);
+      // Não mostra o formulário de cadastro por engano quando só a conexão falhou.
+      setPortalError(err instanceof Error ? err.message : 'Não foi possível carregar o portal.');
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, dbUser, campListingId]);
+  }, [apiFetch, dbUser]);
 
   useEffect(() => {
     loadPortal();
@@ -191,8 +222,9 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
   // Listen for OAuth popup success messages
   useEffect(() => {
     const handler = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
       if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        notify(`Conexão ${event.data.provider} concluída com segurança!`, 'success');
+        notify(event.data.provider === 'mercadopago_seller' ? 'Mercado Pago conectado!' : 'Google Meu Negócio conectado!', 'success');
         loadPortal();
       }
     };
@@ -380,7 +412,9 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
       notify(res.message, 'success');
       if (res.checkoutUrl) {
         // Página do Mercado Pago para cadastrar o cartão (cobrança automática todo mês).
-        window.open(res.checkoutUrl, '_blank', 'noopener,noreferrer');
+        // Abre na mesma aba: celular bloqueia janela aberta depois de esperar o servidor.
+        window.location.href = res.checkoutUrl;
+        return;
       }
       await loadPortal();
     } catch (err: unknown) {
@@ -461,11 +495,15 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
   };
 
   const startOAuthPopup = async (endpoint: string) => {
+    // A janela é aberta JÁ no clique (antes de esperar o servidor) para o navegador do celular não bloquear.
+    const janela = window.open('', 'froc_oauth_popup', 'width=560,height=680');
     try {
       const res = await apiFetch<{ url: string }>(endpoint);
-      window.open(res.url, 'froc_oauth_popup', 'width=560,height=680');
+      if (janela && !janela.closed) janela.location.href = res.url;
+      else window.location.href = res.url; // bloqueado mesmo assim: segue na mesma aba
     } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'Credenciais OAuth ausentes no servidor.', 'error');
+      janela?.close();
+      notify(err instanceof Error ? err.message : 'Não foi possível iniciar a conexão agora.', 'error');
     }
   };
 
@@ -502,6 +540,13 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
         <div className="p-6 md:p-8">
           {loading ? (
             <div className="py-12 text-center text-sm text-[#111111]/70">Carregando portal...</div>
+          ) : portalError && !merchant ? (
+            <div className="py-10 text-center space-y-3">
+              <p className="text-sm text-red-700">{portalError}</p>
+              <button type="button" onClick={() => loadPortal()} className="px-4 py-2 rounded-xl froc-btn-neon text-xs font-extrabold">
+                Tentar de novo
+              </button>
+            </div>
           ) : !dbUser ? (
             <div className="py-10 text-center space-y-4">
               <h3 className="text-xl font-semibold text-[#111111]">
@@ -547,7 +592,7 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                       <div className="flex justify-between items-center gap-2">
                         <span className="font-semibold text-sm text-[#111111]">{plan.name}</span>
                         <span className="text-[11px] font-mono-tabular text-[#111111] font-semibold">
-                          {(plan.commissionBps / 100).toFixed(0)}% com.
+                          {plan.maxListings} anúncio{plan.maxListings > 1 ? 's' : ''}
                         </span>
                       </div>
                       <div className="text-xl font-semibold text-[#111111] font-mono-tabular mt-2">
@@ -658,8 +703,7 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                   <div className="text-xs text-[#111111]/70 inline-flex items-center gap-1.5">
                     <ShieldCheck className="w-4 h-4 text-[#111111]" />
                     <span>
-                      Plano {activePlan?.name} ({((activePlan?.commissionBps ?? 1800) / 100).toFixed(0)}
-                      % comissão) · Status:{' '}
+                      Plano {activePlan?.name ?? '—'} · Status:{' '}
                       {merchant.verificationStatus === 'verified'
                         ? 'Verificado pela IA'
                         : merchant.verificationStatus === 'rejected'
@@ -738,11 +782,13 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                 </div>
               )}
 
+              <LeilaoComissao />
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="p-4 rounded-xl bg-white border border-[#111111]/15">
                   <div className="text-xs text-[#111111]/70">Anúncios publicados</div>
                   <div className="text-2xl font-semibold text-[#111111] font-mono-tabular mt-1">
-                    {myListings.length} / {activePlan?.maxListings ?? 3}
+                    {myListings.filter((l) => l.status !== 'archived').length} / {activePlan?.maxListings ?? 0}
                   </div>
                 </div>
                 <div className="p-4 rounded-xl bg-white border border-[#111111]/15">
@@ -783,9 +829,9 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                       >
                         <div>
                           <div className="text-xs text-[#111111]/70">
-                            {l.moduleType} · {l.subtype} · Status:{' '}
+                            {TIPO_PT[l.moduleType] ?? l.moduleType} · Situação:{' '}
                             <strong className={l.status === 'active' ? 'text-[#111111]' : 'text-[#92400E]'}>
-                              {l.status}
+                              {SITUACAO_PT[l.status] ?? l.status}
                             </strong>
                             {l.promoLabel ? ` · Promoção: ${l.promoLabel}` : ''}
                           </div>
@@ -1015,7 +1061,7 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                       >
                         <div>
                           <div className="font-mono-tabular font-semibold text-[#111111]">
-                            {booking.bookingCode} · {booking.status}
+                            {booking.bookingCode} · {SITUACAO_PT[booking.status] ?? booking.status}
                           </div>
                           <div className="text-sm font-semibold text-[#111111] mt-0.5">
                             {listingTitle}
@@ -1058,8 +1104,7 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                               {`${formatMoney(p.monthlyPriceCents, currency)} / mês`}
                             </div>
                             <div className="text-[11px] text-[#111111]/70 mt-1">
-                              Comissão: {(p.commissionBps / 100).toFixed(0)}% · Até {p.maxListings}{' '}
-                              anúncios
+                              {p.maxListings} anúncio{p.maxListings > 1 ? 's' : ''} por 30 dias · comissão por leilão (14% a 25%)
                             </div>
                           </div>
                           <button
@@ -1248,7 +1293,7 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                     <div className="p-5 rounded-2xl border border-[#111111]/20 bg-white space-y-3">
                       <div className="flex justify-between items-center">
                         <h4 className="text-base font-bold text-[#111111]">
-                          Google Business Profile (OAuth)
+                          Google Meu Negócio
                         </h4>
                         <span
                           className={`text-xs font-bold ${
@@ -1260,36 +1305,32 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                           {oauthStatus?.googleBusiness.connected
                             ? 'Conectado'
                             : oauthStatus?.googleBusiness.configured
-                            ? 'Pronto para autorizar'
-                            : 'Aguardando credenciais'}
+                            ? 'Não conectado'
+                            : 'Em breve'}
                         </span>
                       </div>
                       <p className="text-xs text-[#111111]/75 leading-relaxed">
-                        Conecte a ficha oficial da sua empresa no Google para importar e manter dados
-                        comerciais consistentes com consentimento explícito OAuth 2.0 (nunca simulado).
+                        Conecte a ficha da sua empresa no Google para trazer endereço, horários e avaliações.
                       </p>
                       {oauthStatus?.googleBusiness.accountName && (
                         <div className="p-2.5 rounded-lg bg-[#39FF14]/15 border border-[#111111]/20 text-xs">
                           Conta vinculada: <strong>{oauthStatus.googleBusiness.accountName}</strong>
                         </div>
                       )}
-                      <div className="text-[11px] font-mono-tabular text-[#111111]/65 break-all">
-                        Redirect URI: {oauthStatus?.googleBusiness.redirectUri}
-                      </div>
                       <button
                         type="button"
                         onClick={() => startOAuthPopup('/api/oauth/google-business/url')}
                         className="min-h-[42px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl froc-btn-neon text-xs font-extrabold"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
-                        <span>Autorizar Google Business Profile</span>
+                        <span>Conectar Google Meu Negócio</span>
                       </button>
                     </div>
 
                     <div className="p-5 rounded-2xl border border-[#111111]/20 bg-white space-y-3">
                       <div className="flex justify-between items-center">
                         <h4 className="text-base font-bold text-[#111111]">
-                          Mercado Pago Seller Split (OAuth)
+                          Receber pelo Mercado Pago
                         </h4>
                         <span
                           className={`text-xs font-bold ${
@@ -1301,35 +1342,27 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                           {oauthStatus?.mercadopagoSeller.connected
                             ? 'Vinculado'
                             : oauthStatus?.mercadopagoSeller.configured
-                            ? 'Pronto para autorizar'
-                            : 'Aguardando credenciais'}
+                            ? 'Não conectado'
+                            : 'Em breve'}
                         </span>
                       </div>
                       <p className="text-xs text-[#111111]/75 leading-relaxed">
-                        Vincule sua conta recebedora do Mercado Pago para receber repasses líquidos com
-                        split automático e retenção transparente da taxa de intermediação Froc Rota.
+                        Conecte sua conta do Mercado Pago: o dinheiro das reservas cai direto nela, já sem a
+                        comissão da Froc Rota. Obrigatório para seus anúncios irem ao ar.
                       </p>
-                      {oauthStatus?.mercadopagoSeller.collectorId && (
-                        <div className="p-2.5 rounded-lg bg-[#39FF14]/15 border border-[#111111]/20 text-xs font-mono-tabular">
-                          Collector ID: <strong>{oauthStatus.mercadopagoSeller.collectorId}</strong>
-                        </div>
-                      )}
-                      <div className="text-[11px] font-mono-tabular text-[#111111]/65 break-all">
-                        Redirect URI: {oauthStatus?.mercadopagoSeller.redirectUri}
-                      </div>
                       <button
                         type="button"
                         onClick={() => startOAuthPopup('/api/oauth/mercadopago/url')}
                         className="min-h-[42px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl froc-btn-gold text-xs font-extrabold"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
-                        <span>Vincular Conta Mercado Pago</span>
+                        <span>Conectar Mercado Pago</span>
                       </button>
                     </div>
                   </div>
 
                   <SecurityPinCard
-                    title="Proteção de Acesso & Chave Operacional do Parceiro"
+                    title="Senha da conta"
                     onSuccessMessage={(msg) => notify(msg, 'success')}
                   />
                 </div>

@@ -17,14 +17,20 @@ interface Props {
   blocked: boolean;
   isMerchant: boolean;
   onAdvertise: () => void;
+  onVisibleChange?: (visivel: boolean) => void;
 }
 
 /**
  * Chamada para anunciantes: aparece quando a pessoa já rolou boa parte do site ou vai sair da página
  * (no computador), no máximo a cada 3 dias. Texto verdadeiro, sem números inventados.
  */
-export const AdvertiserCampaign: React.FC<Props> = ({ blocked, isMerchant, onAdvertise }) => {
+export const AdvertiserCampaign: React.FC<Props> = ({ blocked, isMerchant, onAdvertise, onVisibleChange }) => {
   const [open, setOpen] = useState(false);
+
+  // Avisa o site que este aviso está na tela (para os outros pop-ups esperarem a vez).
+  useEffect(() => {
+    onVisibleChange?.(open && !blocked);
+  }, [open, blocked, onVisibleChange]);
 
   useEffect(() => {
     if (isMerchant || recentlyShown()) return;

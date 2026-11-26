@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { analisarLeilao, COMISSAO_MAX_BPS, COMISSAO_MIN_BPS, lanceComissaoBps } from './_lib/leilao.js';
 import { Type } from '@google/genai';
 import { adminDb } from './_lib/firebase-admin.js';
 import { agentReviewListing, agentVerifyMerchant } from './_lib/agent-jobs.js';
@@ -136,10 +137,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         `<html><body>
           <script>
             if (window.opener) {
-              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', provider: 'google_business' }, '*');
+              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', provider: 'google_business' }, window.location.origin);
               window.close();
             } else {
-              window.location.href = '/';
+              window.location.href = '/?painel=anunciante';
             }
           </script>
           <p>Google Business Profile conectado com sucesso. Esta janela será fechada.</p>
@@ -177,10 +178,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         `<html><body>
           <script>
             if (window.opener) {
-              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', provider: 'mercadopago_seller' }, '*');
+              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', provider: 'mercadopago_seller' }, window.location.origin);
               window.close();
             } else {
-              window.location.href = '/';
+              window.location.href = '/?painel=anunciante';
             }
           </script>
           <p>Conta Mercado Pago vinculada ao Split Froc Rota. Esta janela será fechada.</p>
@@ -359,6 +360,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
       const plan = planSnap.exists ? planSnap.data() : null;
       const mListings = listingsSnap.docs
+        .filter((d) => d.data().status !== 'archived')
         .map((d) => d.data() as ListingDoc)
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 
@@ -449,7 +451,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         return;
       }
       const plan = (planSnap.data() as PlanDoc) ?? { name: 'Plano', maxListings: 0 };
-      if (existingSnap.size >= plan.maxListings) {
+      // Anúncios excluídos (arquivados) não ocupam vaga do plano.
+      const emUso = existingSnap.docs.filter((d) => d.data().status !== 'archived').length;
+      if (emUso >= plan.maxListings) {
         sendJson(res, 403, {
           error: `Limite de ${plan.maxListings} anúncios atingido para o plano ${plan.name}.`,
         });
@@ -759,6 +763,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           ? new Date(Date.now() + Number(body.renewDays) * 86400000).toISOString()
           : existing.expiresAt ?? null;
 
+      if (nextStatus === 'active' && existing.status !== 'active') {
+        const [pSnap, todos] = await Promise.all([
+          adminDb.collection('merchant_plans').doc(String(merchant.planId)).get(),
+          adminDb.collection('listings').where('merchantId', '==', merchant.id).get(),
+        ]);
+        const max = Number(pSnap.data()?.maxListings ?? 0);
+        const noAr = todos.docs.filter((d) => d.data().status === 'active').length;
+        if (max && noAr >= max) {
+          sendJson(res, 409, { error: `Seu plano permite ${max} anúncio(s) no ar. Pause outro anúncio ou mude de plano.` });
+          return;
+        }
+      }
       await ref.update({ status: nextStatus, expiresAt: nextExpires });
       sendJson(res, 200, { listing: { ...existing, status: nextStatus, expiresAt: nextExpires } });
     } catch (error) {
@@ -797,7 +813,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         return;
       }
 
-      await ref.update({ status: 'paused' });
+      await ref.update({ status: 'archived', archivedAt: new Date().toISOString() });
       await recordAuditLog({
         actorUserId: user.id,
         actorEmail: user.email,
@@ -860,6 +876,56 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   // GET /api/merchant/subscriptions
+  // LEILÃO DE COMISSÃO — GET mostra posição e sugestão da IA; PATCH grava o lance (14% a 25%)
+  if (route === '/merchant/leilao' && (req.method === 'GET' || req.method === 'PATCH')) {
+    try {
+      const merchant = await findUserMerchant();
+      if (!merchant) {
+        sendJson(res, 404, { error: 'Cadastre-se como anunciante primeiro.' });
+        return;
+      }
+      const ref = adminDb.collection('merchants').doc(String(merchant.id));
+      let lance = lanceComissaoBps((merchant as { commissionBidBps?: number }).commissionBidBps);
+      if (req.method === 'PATCH') {
+        const body = await parseJsonBody<{ bidBps?: number }>(req);
+        const pedido = Number(body.bidBps);
+        if (!Number.isFinite(pedido) || pedido < COMISSAO_MIN_BPS || pedido > COMISSAO_MAX_BPS) {
+          sendJson(res, 400, { error: 'A comissão deve ficar entre 14% e 25%.' });
+          return;
+        }
+        lance = lanceComissaoBps(pedido);
+        await ref.set({ commissionBidBps: lance, commissionBidAt: new Date().toISOString() }, { merge: true });
+      }
+      // Concorrentes: anunciantes com anúncio ativo nos mesmos destinos.
+      const meus = await adminDb.collection('listings').where('merchantId', '==', merchant.id).get();
+      const destinos = [...new Set(meus.docs.map((d) => Number((d.data() as { destinationId?: number }).destinationId)).filter(Boolean))];
+      const rivais = new Map<number, number>();
+      for (let i = 0; i < destinos.length; i += 10) {
+        const lote = destinos.slice(i, i + 10);
+        const snap = await adminDb.collection('listings').where('destinationId', 'in', lote).get();
+        for (const d of snap.docs) {
+          const l = d.data() as { merchantId?: number; status?: string };
+          if (l.status === 'active' && l.merchantId && l.merchantId !== merchant.id) rivais.set(Number(l.merchantId), 0);
+        }
+      }
+      const ids = [...rivais.keys()];
+      if (ids.length) {
+        const docs = await adminDb.getAll(...ids.map((id) => adminDb.collection('merchants').doc(String(id))));
+        for (const d of docs) if (d.exists) rivais.set(Number(d.id), lanceComissaoBps((d.data() as { commissionBidBps?: number }).commissionBidBps));
+      }
+      const analise = analisarLeilao(
+        merchant.id,
+        lance,
+        ids.map((id) => ({ merchantId: id, bidBps: rivais.get(id) ?? COMISSAO_MIN_BPS }))
+      );
+      sendJson(res, 200, { ...analise, minBps: COMISSAO_MIN_BPS, maxBps: COMISSAO_MAX_BPS });
+    } catch (error) {
+      console.error('/api/merchant/leilao error:', error);
+      sendJson(res, 500, { error: 'Erro ao consultar o leilão.' });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && route === '/merchant/subscriptions') {
     try {
       const merchant = await findUserMerchant();
@@ -998,6 +1064,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           cancelled += 1;
         }
       }
+      // Sem renovação automática: vale até o fim do período pago, sem a folga da renovação.
+      await adminDb.collection('merchants').doc(String(merchant.id)).set({ planStatus: 'cancelled' }, { merge: true });
       await recordAuditLog({
         actorUserId: user.id,
         actorEmail: user.email,
@@ -1271,7 +1339,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     if (!url) {
       const cfg = getGoogleBusinessOAuthConfig();
       sendJson(res, 400, {
-        error: `Credenciais GOOGLE_BUSINESS_CLIENT_ID e GOOGLE_BUSINESS_CLIENT_SECRET não configuradas no servidor. Redirect URI cadastrável: ${cfg.redirectUri}`,
+        error: 'A conexão com o Google Meu Negócio ainda não está disponível.',
         config: cfg,
       });
       return;
@@ -1292,7 +1360,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     if (!url) {
       const cfg = getMercadoPagoOAuthConfig();
       sendJson(res, 400, {
-        error: `Credenciais MERCADOPAGO_CLIENT_ID e MERCADOPAGO_CLIENT_SECRET não configuradas no servidor. Redirect URI cadastrável: ${cfg.redirectUri}`,
+        error: 'A conexão com o Mercado Pago está indisponível no momento. Tente mais tarde.',
         config: cfg,
       });
       return;

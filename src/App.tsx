@@ -52,7 +52,7 @@ const LazyFallback = () => (
   <div className="fixed inset-0 z-[92] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4">
     <div className="px-6 py-4 rounded-2xl bg-[#111111] border-2 border-[#39FF14] text-white text-xs font-bold flex items-center gap-3 shadow-2xl">
       <span className="w-3 h-3 rounded-full bg-[#39FF14] animate-ping" />
-      <span>Carregando módulo Froc Rota 2030+...</span>
+      <span>Carregando...</span>
     </div>
   </div>
 );
@@ -101,6 +101,7 @@ function FrocRotaPlatform() {
   const [showLegal, setShowLegal] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [intentVisible, setIntentVisible] = useState(false);
+  const [campanhaVisivel, setCampanhaVisivel] = useState(false);
 
   const hasOpenOverlay = Boolean(
     selectedDestination ||
@@ -236,6 +237,37 @@ function FrocRotaPlatform() {
     }
   }, []);
 
+  // Outras partes do site pedem para abrir o chat (ex.: "Quero este voo" na busca de passagens).
+  useEffect(() => {
+    const abrir = () => setShowChat(true);
+    window.addEventListener('froc-abrir-chat', abrir);
+    return () => window.removeEventListener('froc-abrir-chat', abrir);
+  }, []);
+
+  // Volta do Mercado Pago (?booking=FR-...&payment=...): avisa o resultado e abre "Minha conta".
+  const retornoPagamento = useRef(false);
+  useEffect(() => {
+    if (retornoPagamento.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const codigo = params.get('booking');
+    const pagamento = params.get('payment');
+    if (!codigo || !pagamento) return;
+    if (!dbUser) return; // espera o login carregar
+    retornoPagamento.current = true;
+    if (pagamento === 'failed') {
+      notify(`O pagamento da reserva ${codigo} não foi concluído. Você pode tentar de novo em "Minha conta" enquanto o prazo estiver valendo.`, 'error');
+    } else if (pagamento === 'pending') {
+      notify(`Pagamento da reserva ${codigo} em processamento. Avisaremos assim que o Mercado Pago confirmar.`, 'info');
+    } else {
+      notify(`Recebemos o retorno do pagamento da reserva ${codigo}. A confirmação aparece em "Minha conta" em instantes.`, 'success');
+    }
+    setShowAccount(true);
+    params.delete('booking');
+    params.delete('payment');
+    const rest = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+  }, [dbUser, notify]);
+
   useEffect(() => {
     loadCatalog();
   }, [loadCatalog]);
@@ -368,9 +400,6 @@ function FrocRotaPlatform() {
               className="w-10 h-10 object-contain shrink-0"
             />
             <span>Froc Rota</span>
-            <span className="text-[10px] font-mono-tabular px-1.5 py-0.5 rounded bg-[#111111] text-[#FFD700] font-bold">
-              2030+
-            </span>
           </a>
 
           <nav className="hidden md:flex items-center gap-6 text-sm font-bold text-[#111111]/80">
@@ -645,7 +674,7 @@ function FrocRotaPlatform() {
                           </span>
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FFD700] text-[#111111] font-mono-tabular font-extrabold border border-[#111111]">
                             <Star className="w-3.5 h-3.5 fill-[#111111] text-[#111111]" />
-                            {dest.ratingAvg.toFixed(2)}
+                            {dest.reviewCount > 0 && dest.ratingAvg > 0 ? dest.ratingAvg.toFixed(2) : 'Novo'}
                           </span>
                         </div>
                         <h3 className="text-xl font-extrabold text-[#111111] mt-1.5">
@@ -682,7 +711,7 @@ function FrocRotaPlatform() {
           <section id="mapa" className="scroll-mt-24">
             <div className="max-w-2xl mb-6">
               <div className="text-xs font-extrabold uppercase tracking-wider text-[#FF1493]">
-                📍 Geolocalização · Google Maps Platform
+                📍 Mapa dos destinos
               </div>
               <h2 className="text-3xl md:text-4xl font-extrabold text-[#111111] mt-1">
                 {t.mapSectionTitle}
@@ -843,7 +872,7 @@ function FrocRotaPlatform() {
                           </span>
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FFD700] text-[#111111] font-mono-tabular font-extrabold border border-[#111111]">
                             <Star className="w-3.5 h-3.5 fill-[#111111] text-[#111111]" />
-                            {item.ratingAvg.toFixed(2)}
+                            {item.reviewCount > 0 && item.ratingAvg > 0 ? item.ratingAvg.toFixed(2) : 'Novo'}
                           </span>
                         </div>
                         <h3 className="text-lg font-extrabold text-[#111111] leading-snug">
@@ -1080,9 +1109,10 @@ function FrocRotaPlatform() {
         blocked={hasOpenOverlay || intentVisible}
         isMerchant={dbUser?.role === 'merchant' || Boolean(merchant)}
         onAdvertise={() => setShowMerchantPortal(true)}
+        onVisibleChange={setCampanhaVisivel}
       />
       <PromoPopupEngine
-        blockedByOverlay={hasOpenOverlay || intentVisible}
+        blockedByOverlay={hasOpenOverlay || intentVisible || campanhaVisivel}
         userAudience={dbUser?.role === 'merchant' ? 'merchants' : 'tourists'}
         onAction={handlePopupAction}
       />

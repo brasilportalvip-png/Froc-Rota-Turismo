@@ -108,10 +108,10 @@ export const DestinationDetailModal: React.FC<DestinationDetailModalProps> = ({
           {destination.fotoCredito && (
             <FotoCredito
               credito={destination.fotoCredito}
-              className="absolute top-2 right-3 max-w-[70%] !text-white/80 drop-shadow"
+              className="absolute top-2 right-3 z-10 max-w-[70%] !text-white/90 drop-shadow"
             />
           )}
-          <div className="absolute inset-0 bg-gradient-to-t from-[#111111]/85 via-black/25 to-transparent" />
+          <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-[#111111]/85 via-black/25 to-transparent" />
           <div className="absolute bottom-5 left-6 right-6 flex flex-wrap items-center justify-between gap-3 text-white">
             <div className="flex items-center gap-2">
               <button
@@ -148,10 +148,10 @@ export const DestinationDetailModal: React.FC<DestinationDetailModalProps> = ({
               <div className="text-xl font-extrabold text-[#111111] font-mono-tabular mt-1 inline-flex items-center gap-1.5">
                 <span className="px-2 py-0.5 rounded-md bg-[#FFD700] text-[#111111] border border-[#111111] inline-flex items-center gap-1 text-sm">
                   <Star className="w-3.5 h-3.5 fill-[#111111]" />
-                  {destination.ratingAvg.toFixed(2)}
+                  {destination.ratingAvg > 0 ? destination.ratingAvg.toFixed(2) : 'Novo'}
                 </span>
                 <span className="text-xs font-sans font-semibold text-[#111111]/70">
-                  ({destination.reviewCount + reviews.length} opiniões)
+                  {destination.reviewCount + reviews.length > 0 ? `(${destination.reviewCount + reviews.length} opiniões)` : '(seja o primeiro a avaliar)'}
                 </span>
               </div>
             </div>

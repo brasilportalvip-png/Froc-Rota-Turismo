@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { MapPin, Search, Sparkles } from 'lucide-react';
 import { trackInterest } from '../lib/intent.ts';
 
@@ -47,6 +47,8 @@ export const VitrineBrasil: React.FC<Props> = ({ onOpenDestination, onSearch }) 
   const [q, setQ] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [fotos, setFotos] = useState<Record<string, FotoDestino | null>>({});
+  const tentativas = useRef(0);
+  const [rodada, setRodada] = useState(0);
 
   useEffect(() => {
     fetch('/api/brasil/destinos')
@@ -88,17 +90,25 @@ export const VitrineBrasil: React.FC<Props> = ({ onOpenDestination, onSearch }) 
       .then((r) => (r.ok ? r.json() : { fotos: {} }))
       .then((d: { fotos?: Record<string, FotoDestino | null> }) => {
         if (!vivo) return;
+        tentativas.current += 1;
         setFotos((prev) => {
           const next = { ...prev };
-          for (const sl of pedidos) next[sl] = d.fotos?.[sl] ?? null;
+          for (const sl of pedidos) {
+            // O servidor pode devolver só parte (limite de tempo); o resto vem no próximo pedido (até 3 vezes).
+            if (d.fotos && sl in d.fotos) next[sl] = d.fotos[sl] ?? null;
+            else if (tentativas.current >= 3) next[sl] = null;
+          }
           return next;
         });
+        if (pedidos.some((sl) => !(d.fotos && sl in d.fotos)) && tentativas.current < 3) {
+          window.setTimeout(() => setRodada((r) => r + 1), 1500);
+        }
       })
       .catch(() => {});
     return () => {
       vivo = false;
     };
-  }, [faltandoKey]);
+  }, [faltandoKey, rodada]);
 
   if (destinos.length === 0) return null;
 

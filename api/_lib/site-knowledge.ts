@@ -10,7 +10,7 @@ export const OWNER_RULES = [
   'O site NÃO oferece cupons de desconto.',
   'Cadastro anti-fraude obrigatório: CPF verdadeiro (dígitos válidos e não usado por outra conta) + foto do documento + selfie, analisados pela IA. Caso duvidoso vai para revisão humana no Painel Admin.',
   'Sem identidade aprovada ninguém reserva nem anuncia. Login por e-mail/senha exige e-mail confirmado.',
-  'Toda reserva usa o split automático do Mercado Pago: o valor cai na conta do parceiro e a comissão do plano fica com a Froc Rota.',
+  'Toda reserva usa o split automático do Mercado Pago: o valor cai na conta do parceiro e a comissão do anunciante fica com a Froc Rota (cada anunciante escolhe de 14% a 25% no leilão de comissão; quem oferece mais aparece primeiro).',
   'Parceiro só anuncia depois da verificação feita pela IA (documento CPF/CNPJ válido, CPF igual ao do responsável verificado, cadastro coerente).',
   'Anúncio só fica no ar com parceiro verificado + plano pago em dia + conta Mercado Pago conectada.',
   'Três painéis: Admin (dono e sub-admins), Usuário/Turista (Minha Conta) e Anunciante (Portal do Parceiro).',
@@ -51,7 +51,7 @@ export async function getSiteKnowledgeText(opts: { compact?: boolean } = {}): Pr
       .sort((a, b) => Number(a.monthlyPriceCents) - Number(b.monthlyPriceCents))
       .map(
         (p) =>
-          `- ${p.name}: ${brl(p.monthlyPriceCents)}/mês, comissão ${(Number(p.commissionBps) / 100).toFixed(0)}%, até ${p.maxListings} anúncios`
+          `- ${p.name}: ${brl(p.monthlyPriceCents)} por 30 dias, ${p.maxListings} anúncio(s), comissão por leilão de 14% a 25%`
       )
       .join('\n');
     pricingText = rules.docs

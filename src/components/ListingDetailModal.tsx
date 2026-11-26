@@ -140,7 +140,7 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
               </div>
               <div className="inline-flex items-center gap-1 font-mono-tabular text-[#111111] font-semibold">
                 <Star className="w-3.5 h-3.5 fill-[#D9A441] text-[#D9A441]" />
-                <span>{listing.ratingAvg.toFixed(2)}</span>
+                <span>{listing.reviewCount > 0 && listing.ratingAvg > 0 ? listing.ratingAvg.toFixed(2) : 'Novo'}</span>
               </div>
             </div>
 
@@ -196,11 +196,14 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                 <select
                   value={reviewRating}
                   onChange={(e) => setReviewRating(Number(e.target.value))}
+                  aria-label="Nota"
                   className="px-2.5 py-2 rounded-lg border border-[#111111]/15 text-xs bg-white"
                 >
                   <option value={5}>5 ★</option>
                   <option value={4}>4 ★</option>
                   <option value={3}>3 ★</option>
+                  <option value={2}>2 ★</option>
+                  <option value={1}>1 ★</option>
                 </select>
                 <input
                   type="text"

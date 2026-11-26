@@ -1,11 +1,12 @@
 import crypto from 'node:crypto';
+import { liberarReservasVencidas } from './_lib/reservas.js';
 import { assetParaFotoReal } from './_lib/fotos.js';
 import { adminDb } from './_lib/firebase-admin.js';
 import { agentModerateReview } from './_lib/agent-jobs.js';
 import { dispatchAgentTask } from './_lib/agents.js';
 import { askFrocRotaAI } from './_lib/ai.js';
 import { recordAuditLog } from './_lib/audit.js';
-import { authenticateRequest } from './_lib/auth.js';
+import { hasAdminPermission, authenticateRequest } from './_lib/auth.js';
 import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.js';
 import {
   analyzeIdentityWithAI,
@@ -127,9 +128,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const auth = await authenticateRequest(req, res);
   if (!auth) return;
   const user = auth.dbUser;
+  // Equipe só vê/atende conversas de outros com a permissão "chat" (o dono tem todas).
   const isStaff =
     auth.authUser.email_verified === true &&
-    (user.role === 'admin' || user.role === 'subadmin');
+    (user.role === 'admin' || user.role === 'subadmin') &&
+    hasAdminPermission(auth.adminPermissions ?? [], 'chat');
 
   // ========================
   // USER PROFILE (/api/me)
@@ -349,7 +352,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           uid: user.uid,
           userId: user.id,
           email: user.email,
-          status: 'pending',
+          // Já entra na fila da equipe: se a análise automática cair no meio, ninguém fica preso em "pendente".
+          status: 'manual_review',
+          reason: 'Em análise.',
           fullName,
           cpfMasked: maskCpf(cpf),
           cpfHash: hash,
@@ -395,13 +400,21 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         {
           status: decision.status,
           reason: decision.reason,
-          aiResult,
+          // CPF lido no documento fica mascarado (LGPD).
+          aiResult: aiResult
+            ? { ...(aiResult as Record<string, unknown>), cpfNoDocumento: maskCpf(String((aiResult as { cpfNoDocumento?: string }).cpfNoDocumento || '')) }
+            : null,
           reviewedByEmail: decision.status === 'manual_review' ? null : 'ia',
           decidedAt,
           updatedAt: decidedAt,
         },
         { merge: true }
       );
+      // LGPD: decidido pela IA (aprovado ou reprovado), as fotos são apagadas. Em revisão humana, ficam para a equipe.
+      if (decision.status === 'approved' || decision.status === 'rejected') {
+        await Promise.all(['document', 'selfie'].map((k) => adminDb.collection('kyc_images').doc(`${user.uid}_${k}`).delete().catch(() => undefined)));
+        await adminDb.collection('identity_checks').doc(user.uid).set({ hasDocumentImage: false, hasSelfieImage: false }, { merge: true });
+      }
       if (decision.status === 'rejected') {
         // Reprovado: o CPF não fica preso a esta conta.
         const idx = await indexRef.get();
@@ -429,6 +442,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // ========================
   if (req.method === 'GET' && route === '/tourist/dashboard') {
     try {
+      // Reservas não pagas no prazo aparecem como vencidas (e as vagas voltam para venda).
+      await liberarReservasVencidas({ userId: user.id }).catch(() => 0);
       const [bookingsSnap, favsSnap, itinSnap, conciergeSnap, allListings] = await Promise.all([
         adminDb.collection('bookings').where('userId', '==', user.id).get(),
         adminDb.collection('favorites').where('userId', '==', user.id).get(),
@@ -688,6 +703,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         sendJson(res, 400, { error: 'Escreva um comentário para publicar a avaliação.' });
         return;
       }
+      // Avaliação de oferta só de quem comprou (reserva paga), para a nota ser verdadeira.
+      if (body.listingId) {
+        const compras = await adminDb.collection('bookings').where('userId', '==', user.id).where('listingId', '==', Number(body.listingId)).get();
+        if (!compras.docs.some((d) => d.data().status === 'confirmed')) {
+          sendJson(res, 403, { error: 'Só quem reservou e pagou esta oferta pode avaliá-la.' });
+          return;
+        }
+      }
       const id = await nextSeqId('reviews');
       const created = {
         id,
@@ -820,6 +843,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   // POST /api/travel/orders (Server-Authoritative Fare Verification + Idempotent)
+  // Emissão automática de passagens fica desligada até a conta Duffel estar em produção com pagamento
+  // integrado. Hoje o cliente escolhe o voo e a equipe emite pelo atendimento (botão "Quero este voo").
+  if (req.method === 'POST' && route === '/travel/orders' && process.env.FLIGHT_ORDERS_ENABLED !== 'true') {
+    sendJson(res, 503, { error: 'Compra online de passagens em breve. Use "Quero este voo" para a equipe emitir para você.' });
+    return;
+  }
   if (req.method === 'POST' && route === '/travel/orders') {
     if (!checkRateLimit(req, res, 'travel:orders', 15, 60000)) return;
     try {

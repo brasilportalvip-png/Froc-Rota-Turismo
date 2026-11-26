@@ -44,7 +44,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         )
       : guestsCount;
 
-  const baseTotalCents = listing.priceCents * units;
+  // Mesmo preço que o servidor cobra: horário com preço próprio > preço promocional > preço normal.
+  const slotEscolhido = slots.find((x) => x.id === selectedSlotId) as { priceOverrideCents?: number | null } | undefined;
+  const precoUnitario =
+    slotEscolhido?.priceOverrideCents && slotEscolhido.priceOverrideCents > 0
+      ? slotEscolhido.priceOverrideCents
+      : listing.promoPriceCents && listing.promoPriceCents > 0
+      ? listing.promoPriceCents
+      : listing.priceCents;
+  const baseTotalCents = precoUnitario * units;
   const finalTotalCents = baseTotalCents;
   const isStaff = dbUser?.role === 'admin' || dbUser?.role === 'subadmin';
   // Anti-fraude: e-mail confirmado + identidade aprovada antes de reservar.
@@ -86,7 +94,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       <div className="w-full max-w-lg bg-[#FFFFFF] rounded-2xl border-2 border-[#111111] shadow-2xl overflow-hidden my-4 froc-animate-modal">
         <FuturisticModalHeader
           title={listing.title}
-          subtitle="Checkout Seguro Froc Rota 2030+"
+          subtitle="Pagamento seguro pelo Mercado Pago"
           icon={<Lock className="w-4 h-4" />}
           onBack={onClose}
           onClose={onClose}
@@ -102,7 +110,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs text-[#111111]/70">
-                <span>Status atual no servidor</span>
+                <span>Situação</span>
                 <span
                   className={`font-extrabold ${
                     createdBooking.status === 'confirmed'
@@ -112,7 +120,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 >
                   {createdBooking.status === 'confirmed'
                     ? 'Confirmada e Paga'
-                    : 'Aguardando confirmação do provedor'}
+                    : 'Aguardando pagamento'}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm font-extrabold text-[#111111] pt-2 border-t border-[#111111]/15">
@@ -127,30 +135,26 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <div className="flex items-start gap-3 p-4 rounded-xl bg-[#39FF14]/20 border border-[#111111] text-xs text-[#111111]">
                 <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
                 <div>
-                  Transação conciliada e registrada na trilha de auditoria. Acesse{' '}
-                  <strong>Minhas Viagens</strong> a qualquer momento para visualizar seu voucher.
+                  Pagamento confirmado. Acesse <strong>Minha conta</strong> a qualquer momento para ver sua reserva.
                 </div>
               </div>
             ) : (
               <div className="space-y-3">
                 <p className="text-xs text-[#111111]/75 leading-relaxed">
-                  Por segurança financeira, nenhuma reserva é confirmada apenas pelo navegador. A
-                  confirmação ocorre exclusivamente via webhook assinado do Mercado Pago após
-                  aprovação do pagamento com valor idêntico ao da reserva.
+                  Sua vaga fica guardada por 60 minutos. Pague pelo Mercado Pago (Pix ou cartão) para confirmar —
+                  a confirmação chega automaticamente assim que o pagamento for aprovado. Se fechar esta janela, o botão
+                  "Pagar agora" fica em Minha conta.
                 </p>
                 {checkoutUrl ? (
                   <a
                     href={checkoutUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
                     className="block w-full min-h-[44px] text-center py-3 rounded-xl froc-btn-neon text-sm font-extrabold"
                   >
                     Pagar no Mercado Pago
                   </a>
                 ) : (
                   <div className="p-3.5 rounded-xl bg-[#FFD700]/15 border border-[#111111]/25 text-xs font-semibold text-[#111111]">
-                    Preferência do Mercado Pago indisponível no momento (verifique
-                    MERCADOPAGO_ACCESS_TOKEN no servidor). A reserva permanece aguardando pagamento.
+                    O link de pagamento não abriu. Vá em Minha conta e toque em "Pagar agora".
                   </div>
                 )}
               </div>

@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { sendPasswordResetEmail, updatePassword } from 'firebase/auth';
+import { auth } from '../lib/firebase.ts';
 import { ArrowLeft, CheckCircle2, Eye, EyeOff, Lock, ShieldCheck, X } from 'lucide-react';
 
 export interface FuturisticModalHeaderProps {
@@ -116,7 +118,7 @@ export function evaluatePasswordStrength(pwd: string): {
   if (score <= 1) return { score: 1, label: 'Fraca (mín. 8 caracteres)', color: '#FF1493' };
   if (score === 2) return { score: 2, label: 'Moderada', color: '#FFD700' };
   if (score === 3) return { score: 3, label: 'Forte', color: '#39FF14' };
-  return { score: 4, label: 'Ultra Segura 2030+', color: '#39FF14' };
+  return { score: 4, label: 'Muito forte', color: '#39FF14' };
 }
 
 export interface PasswordFieldProps {
@@ -208,7 +210,7 @@ export const SecurityPinCard: React.FC<{
   title?: string;
   onSuccessMessage?: (msg: string) => void;
 }> = ({
-  title = 'Chave de Autorização & Segurança Operacional',
+  title = 'Senha da conta',
   onSuccessMessage,
 }) => {
   const [password, setPassword] = useState('');
@@ -223,7 +225,8 @@ export const SecurityPinCard: React.FC<{
       ? 'As senhas digitadas não coincidem.'
       : null;
 
-  const handleSave = (e: React.FormEvent) => {
+  // Troca de senha DE VERDADE na conta (Firebase Authentication).
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     if (password.length < 8 || strength.score < 2) {
@@ -234,15 +237,48 @@ export const SecurityPinCard: React.FC<{
       setErrorMsg('A confirmação da senha não coincide.');
       return;
     }
+    const user = auth.currentUser;
+    if (!user) {
+      setErrorMsg('Entre na sua conta para trocar a senha.');
+      return;
+    }
+    if (!user.providerData.some((p) => p.providerId === 'password')) {
+      setErrorMsg('Sua conta entra pelo Google: a senha é a da sua conta Google.');
+      return;
+    }
     setSaving(true);
-    setTimeout(() => {
-      setSaving(false);
+    try {
+      await updatePassword(user, password);
       setPassword('');
       setConfirmPassword('');
-      const stamp = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-      setSavedAt(stamp);
-      onSuccessMessage?.('Chave de segurança configurada com validação criptográfica!');
-    }, 350);
+      setSavedAt(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
+      onSuccessMessage?.('Senha alterada com sucesso.');
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/requires-recent-login') {
+        setErrorMsg('Por segurança, saia e entre de novo na conta e repita a troca — ou use "Receber link por e-mail".');
+      } else if (code === 'auth/weak-password') {
+        setErrorMsg('Senha fraca. Use pelo menos 8 caracteres com letras e números.');
+      } else {
+        setErrorMsg('Não foi possível trocar a senha agora. Tente novamente.');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const enviarLink = async () => {
+    const email = auth.currentUser?.email;
+    if (!email) {
+      setErrorMsg('Entre na sua conta para receber o link.');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      onSuccessMessage?.(`Enviamos um link para ${email} para você criar uma nova senha.`);
+    } catch {
+      setErrorMsg('Não foi possível enviar o link agora. Tente novamente.');
+    }
   };
 
   return (
@@ -256,7 +292,7 @@ export const SecurityPinCard: React.FC<{
           <div>
             <h4 className="text-sm font-bold text-[#111111]">{title}</h4>
             <p className="text-xs text-[#111111]/70">
-              Proteção extra com verificação de força e máscara privada (nunca exibida automaticamente).
+              Troque a senha que você usa para entrar na Froc Rota.
             </p>
           </div>
         </div>
@@ -265,7 +301,7 @@ export const SecurityPinCard: React.FC<{
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <PasswordField
           id="froc-sec-password"
-          label="Nova senha / PIN operacional"
+          label="Nova senha"
           value={password}
           onChange={(val) => {
             setPassword(val);
@@ -295,11 +331,18 @@ export const SecurityPinCard: React.FC<{
       {savedAt && (
         <div className="p-3 rounded-xl border border-[#111111] bg-[#39FF14]/20 text-xs font-semibold text-[#111111] flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0" />
-          <span>Credencial validada e atualizada às {savedAt}.</span>
+          <span>Senha alterada às {savedAt}.</span>
         </div>
       )}
 
       <div className="flex flex-wrap items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={enviarLink}
+          className="min-h-[44px] px-4 py-2 rounded-xl border border-[#111111]/30 text-xs font-bold text-[#111111] hover:bg-[#111111]/5 mr-auto"
+        >
+          Receber link por e-mail
+        </button>
         {(password || confirmPassword) && (
           <button
             type="button"
@@ -318,7 +361,7 @@ export const SecurityPinCard: React.FC<{
           disabled={saving}
           className="min-h-[44px] px-5 py-2 rounded-xl froc-btn-neon text-xs font-bold disabled:opacity-60"
         >
-          {saving ? 'Validando...' : 'Salvar Senha de Segurança'}
+          {saving ? 'Salvando...' : 'Trocar senha'}
         </button>
       </div>
     </form>

@@ -40,7 +40,7 @@ export const PWAInstallButton: React.FC = () => {
       const perm = await Notification.requestPermission();
       setNotifStatus(perm);
       if (perm === 'granted') {
-        new Notification('Froc Rota Turismo 2030+', {
+        new Notification('Froc Rota Turismo', {
           body: 'Alertas de voo, promoções e chat em tempo real ativados!',
           icon: '/pwa-192x192.png',
         });

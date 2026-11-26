@@ -27,6 +27,23 @@ interface TouristAccountProps {
   onOpenChat?: () => void;
 }
 
+const STATUS_PT: Record<string, string> = {
+  pending_payment: 'Aguardando pagamento',
+  confirmed: 'Confirmada e paga',
+  cancelled: 'Cancelada',
+  expired: 'Prazo de pagamento vencido',
+  refunded: 'Cancelada e reembolsada',
+  refund_requested: 'Cancelada · reembolso em andamento',
+  disputed: 'Pagamento contestado',
+  completed: 'Concluída',
+  pending: 'Em análise',
+  proposal_sent: 'Proposta enviada — veja abaixo',
+  accepted: 'Aceita',
+  in_progress: 'Em andamento',
+  awaiting_payment: 'Aguardando pagamento',
+  issued: 'Emitida',
+};
+
 export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenChat }) => {
   const {
     apiFetch,
@@ -136,6 +153,8 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
       amountCents?: number;
       bookingId?: number;
       cancellable?: boolean;
+      payUrl?: string | null;
+      detail?: string | null;
     }> = [];
 
     for (const { booking, listingTitle, moduleType } of bookings) {
@@ -154,6 +173,12 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
         amountCents: booking.grossAmountCents,
         bookingId: booking.id,
         cancellable: booking.status === 'pending_payment' || booking.status === 'confirmed',
+        payUrl:
+          booking.status === 'pending_payment' &&
+          (booking as { checkoutUrl?: string | null }).checkoutUrl &&
+          (!(booking as { expiresAt?: string | null }).expiresAt || String((booking as { expiresAt?: string }).expiresAt) > new Date().toISOString())
+            ? String((booking as { checkoutUrl?: string }).checkoutUrl)
+            : null,
       });
     }
 
@@ -178,6 +203,7 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
         title: `${c.originCity} → ${c.destinationPref}`,
         status: c.status,
         amountCents: c.proposalAmountCents ?? c.budgetCents,
+        detail: c.proposalSummary ?? null,
       });
     }
 
@@ -202,8 +228,8 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
 
   const handleCancelBooking = async (bookingId: number) => {
     try {
-      await apiFetch(`/api/bookings/${bookingId}/cancel`, { method: 'POST' });
-      notify('Cancelamento / reembolso processado conforme política.', 'info');
+      const r = await apiFetch<{ message?: string }>(`/api/bookings/${bookingId}/cancel`, { method: 'POST' });
+      notify(r?.message || 'Reserva cancelada.', 'info');
       await loadData();
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : 'Erro ao cancelar.', 'error');
@@ -363,14 +389,32 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
                                 {item.title}
                               </div>
                               <div className="text-xs mt-1 text-[#111111] font-medium">
-                                Status real: {item.status}
+                                {STATUS_PT[item.status] ?? item.status}
                               </div>
+                              {item.detail && (
+                                <div className="mt-2 p-3 rounded-lg bg-[#39FF14]/10 border border-[#39FF14] text-xs text-[#111111] whitespace-pre-wrap">
+                                  <strong>Proposta da equipe:</strong> {item.detail}
+                                  {onOpenChat && (
+                                    <button type="button" onClick={onOpenChat} className="block mt-2 underline font-bold">
+                                      Responder / aceitar pelo chat
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-center gap-3">
                               {item.amountCents !== undefined && (
                                 <span className="font-mono-tabular text-sm font-semibold text-[#111111]">
                                   {formatMoney(item.amountCents, currency)}
                                 </span>
+                              )}
+                              {item.payUrl && (
+                                <a
+                                  href={item.payUrl}
+                                  className="px-3 py-1.5 rounded-xl froc-btn-neon text-xs font-extrabold"
+                                >
+                                  Pagar agora
+                                </a>
                               )}
                               {item.cancellable && item.bookingId && (
                                 confirmCancelBookingId === item.bookingId ? (
@@ -712,7 +756,7 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
                   </form>
 
                   <SecurityPinCard
-                    title="Senha & Proteção Privada da Conta"
+                    title="Senha da conta"
                     onSuccessMessage={(msg) => notify(msg, 'success')}
                   />
                 </div>

@@ -258,7 +258,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center bg-white">
               <Compass className="w-10 h-10 text-[#111111] mb-3" />
               <p className="text-sm font-extrabold text-[#111111]">
-                Bússola Geográfica Froc Rota 2030+
+                Mapa de destinos Froc Rota
               </p>
               <p className="text-xs text-[#111111]/70 mt-1 max-w-md">
                 Configure `VITE_GOOGLE_MAPS_API_KEY` para renderizar os blocos visuais do Google Maps. Enquanto isso, consulte ao lado as distâncias calculadas e rotas diretas.

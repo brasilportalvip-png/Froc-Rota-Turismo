@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
+import { lanceComissaoBps } from './_lib/leilao.js';
 import { adminDb } from './_lib/firebase-admin.js';
 import { dispatchAgentTask } from './_lib/agents.js';
 import { recordAuditLog } from './_lib/audit.js';
-import { authenticateRequest } from './_lib/auth.js';
+import { authenticateRequest, hasAdminPermission } from './_lib/auth.js';
 import { nextSeqId } from './_lib/firestore-helpers.js';
 import { isIdentityApproved } from './_lib/identity.js';
 import { getSellerAccessToken } from './_lib/mp-marketplace.js';
@@ -19,8 +20,11 @@ import { getAppBaseUrl } from './_lib/oauth.js';
 import {
   calculateCommissionSplit,
   createMercadoPagoPreference,
-  getPaymentGatewayStatus,
+  PRAZO_PAGAMENTO_MIN,
+  refundMercadoPagoPayment,
 } from './_lib/payment.js';
+import { merchantBlockers, type MerchantLike } from './_lib/merchant-status.js';
+import { BookingDoc, lerVaga, liberarReservasVencidas, validarDatas } from './_lib/reservas.js';
 import { recordImmutableLedgerEntry } from './_lib/pricing.js';
 import { ensureSeeded } from './_lib/seed.js';
 
@@ -51,45 +55,71 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         return;
       }
 
-      const booking = snap.data() as {
-        id: number;
-        bookingCode: string;
-        userId: number;
-        slotId?: number | null;
-        guestsCount: number;
-        status: string;
-      };
+      const booking = snap.data() as BookingDoc;
 
       const isAdmin =
         auth.authUser.email_verified === true &&
-        (auth.dbUser.role === 'admin' || auth.dbUser.role === 'subadmin');
+        (auth.dbUser.role === 'admin' || auth.dbUser.role === 'subadmin') &&
+        hasAdminPermission(auth.adminPermissions ?? [], 'finance');
       if (booking.userId !== auth.dbUser.id && !isAdmin) {
         sendJson(res, 403, { error: 'Sem permissão.' });
         return;
       }
 
-      if (booking.status === 'cancelled' || booking.status === 'refunded') {
-        sendJson(res, 400, { error: 'Reserva já cancelada.' });
+      if (['cancelled', 'refunded', 'expired', 'refund_requested'].includes(booking.status)) {
+        sendJson(res, 400, { error: 'Esta reserva já foi cancelada.' });
         return;
       }
 
-      const newStatus = booking.status === 'confirmed' ? 'refunded' : 'cancelled';
+      // Reserva paga: devolve o dinheiro no Mercado Pago ANTES de marcar como reembolsada.
+      let newStatus: 'cancelled' | 'refunded' | 'refund_requested' = 'cancelled';
+      if (booking.status === 'confirmed') {
+        const merchantId = booking.merchantId ?? Number((await adminDb.collection('listings').doc(String(booking.listingId)).get()).data()?.merchantId);
+        const sellerToken = Number.isFinite(merchantId) ? await getSellerAccessToken(Number(merchantId)) : null;
+        const devolvido =
+          booking.paymentRef && sellerToken ? await refundMercadoPagoPayment(String(booking.paymentRef), sellerToken) : false;
+        newStatus = devolvido ? 'refunded' : 'refund_requested';
+      }
+      const nowIso = new Date().toISOString();
       await adminDb.runTransaction(async (tx) => {
-        tx.update(bookingRef, { status: newStatus, updatedAt: new Date().toISOString() });
+        // Firestore: todas as leituras antes das escritas.
+        const vaga = await lerVaga(tx, booking.slotId);
+        tx.update(bookingRef, { status: newStatus, updatedAt: nowIso, cancelledByUid: auth.dbUser.uid });
         tx.set(
           adminDb.collection('payments').doc(String(booking.id)),
-          { status: newStatus === 'refunded' ? 'refunded' : 'failed' },
+          { status: newStatus === 'refunded' ? 'refunded' : newStatus === 'refund_requested' ? 'refund_pending' : 'cancelled', updatedAt: nowIso },
           { merge: true }
         );
-        if (booking.slotId) {
-          const slotRef = adminDb.collection('availability_slots').doc(String(booking.slotId));
-          const slotSnap = await tx.get(slotRef);
-          if (slotSnap.exists) {
-            const currentSpots = Number(slotSnap.data()?.availableSpots ?? 0);
-            tx.update(slotRef, { availableSpots: currentSpots + booking.guestsCount });
-          }
-        }
+        if (vaga) tx.update(vaga.ref, { availableSpots: vaga.disponiveis + Number(booking.guestsCount || 0) });
       });
+      if (newStatus === 'refunded') {
+        await recordImmutableLedgerEntry({
+          operationType: 'refund',
+          referenceCode: `${booking.bookingCode}-REEMBOLSO`,
+          category: 'bookings',
+          breakdown: {
+            ruleCode: 'MARKETPLACE-REFUND',
+            ruleName: 'Reembolso de reserva',
+            supplierCostCents: 0,
+            platformRemunerationCents: 0,
+            paymentFeeCents: 0,
+            taxCents: 0,
+            discountCents: 0,
+            finalClientCents: -Number(booking.grossAmountCents || 0),
+            merchantPayoutCents: 0,
+            estimatedMarginCents: 0,
+          },
+        }).catch(() => undefined);
+      }
+      if (newStatus === 'refund_requested') {
+        await dispatchAgentTask({
+          department: 'Financeiro',
+          triggerType: 'event',
+          eventName: 'REFUND_REQUESTED',
+          title: `Reembolso manual: ${booking.bookingCode}`,
+          input: { bookingCode: booking.bookingCode, paymentRef: booking.paymentRef ?? null },
+        }).catch(() => undefined);
+      }
 
       await recordAuditLog({
         actorUserId: auth.dbUser.id,
@@ -100,7 +130,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         details: { previousStatus: booking.status, newStatus },
       });
 
-      sendJson(res, 200, { status: newStatus, bookingCode: booking.bookingCode });
+      sendJson(res, 200, {
+        status: newStatus,
+        bookingCode: booking.bookingCode,
+        message:
+          newStatus === 'refunded'
+            ? 'Reserva cancelada e valor devolvido pelo Mercado Pago (o prazo para aparecer depende do seu banco/cartão).'
+            : newStatus === 'refund_requested'
+            ? 'Reserva cancelada. O reembolso foi encaminhado à equipe financeira e você será avisado.'
+            : 'Reserva cancelada.',
+      });
     } catch (error) {
       console.error('Cancel booking error:', error);
       sendJson(res, 500, { error: 'Falha ao cancelar reserva.' });
@@ -142,7 +181,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
       // Split obrigatório: o parceiro precisa ter a conta Mercado Pago conectada.
       const listingPre = await adminDb.collection('listings').doc(String(Number(listingId))).get();
-      const preMerchantId = listingPre.exists ? Number(listingPre.data()?.merchantId) : NaN;
+      if (!listingPre.exists || listingPre.data()?.status !== 'active') {
+        sendJson(res, 404, { error: 'Esta oferta não está mais disponível.', code: 'LISTING_UNAVAILABLE' });
+        return;
+      }
+      const preMerchantId = Number(listingPre.data()?.merchantId);
       const sellerAccessToken = Number.isFinite(preMerchantId) ? await getSellerAccessToken(preMerchantId) : null;
       if (!sellerAccessToken) {
         sendJson(res, 409, {
@@ -169,7 +212,22 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       }
 
       const guests = Math.max(1, Math.min(30, Number(guestsCount) || 1));
+      const listingPreData = (listingPre.data() ?? {}) as { moduleType?: string };
+      const hospedagem = listingPreData.moduleType === 'accommodation';
+      const datas = validarDatas({ checkInDate, checkOutDate, hospedagem });
+      if (datas.erro) {
+        sendJson(res, 400, { error: datas.erro });
+        return;
+      }
+      // Reservas não pagas no prazo desta oferta devolvem as vagas antes de conferir disponibilidade.
+      await liberarReservasVencidas({ listingId: Number(listingId) }).catch(() => 0);
+      const temHorarios = !(await adminDb.collection('availability_slots').where('listingId', '==', Number(listingId)).limit(1).get()).empty;
+      if (temHorarios && !slotId) {
+        sendJson(res, 400, { error: 'Escolha um horário/data disponível para esta oferta.' });
+        return;
+      }
       const newBookingId = await nextSeqId('bookings');
+      const expiresAt = new Date(Date.now() + PRAZO_PAGAMENTO_MIN * 60000).toISOString();
 
       const result = await adminDb.runTransaction(async (tx) => {
         const listingRef = adminDb.collection('listings').doc(String(Number(listingId)));
@@ -183,6 +241,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           title: string;
           moduleType: string;
           priceCents: number;
+          promoPriceCents?: number | null;
           currency: string;
           capacity: number;
           status: string;
@@ -199,15 +258,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         if (!merchantSnap.exists) {
           throw new Error('LISTING_UNAVAILABLE');
         }
-        const merchant = merchantSnap.data() as { id: number; planId: number };
+        const merchant = merchantSnap.data() as MerchantLike & { id: number; planId: number; commissionBidBps?: number };
+        // Regra do dono: só vende parceiro verificado + plano pago em dia + Mercado Pago conectado.
+        if (merchantBlockers(merchant).length > 0) {
+          throw new Error('LISTING_UNAVAILABLE');
+        }
+        // Comissão = lance do anunciante no leilão (14% a 25%).
+        const plan = { commissionBps: lanceComissaoBps(merchant.commissionBidBps) };
 
-        const planRef = adminDb.collection('merchant_plans').doc(String(merchant.planId));
-        const planSnap = await tx.get(planRef);
-        const plan = planSnap.exists
-          ? (planSnap.data() as { commissionBps: number })
-          : { commissionBps: 1800 };
-
-        let unitPriceCents = listing.priceCents;
+        // Mesmo preço que o cliente vê: horário com preço próprio > preço promocional > preço normal.
+        let unitPriceCents = listing.promoPriceCents && listing.promoPriceCents > 0 ? listing.promoPriceCents : listing.priceCents;
 
         if (slotId) {
           const slotRef = adminDb.collection('availability_slots').doc(String(Number(slotId)));
@@ -218,11 +278,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           const slot = slotSnap.data() as {
             id: number;
             listingId: number;
+            date?: string;
             availableSpots: number;
             priceOverrideCents?: number | null;
           };
           if (slot.listingId !== listing.id || slot.availableSpots < guests) {
             throw new Error('INSUFFICIENT_SPOTS');
+          }
+          if (slot.date && slot.date !== String(checkInDate)) {
+            throw new Error('SLOT_DATE_MISMATCH');
           }
           if (slot.priceOverrideCents) {
             unitPriceCents = slot.priceOverrideCents;
@@ -230,13 +294,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           tx.update(slotRef, { availableSpots: slot.availableSpots - guests });
         }
 
-        let units = guests;
-        if (listing.moduleType === 'accommodation' && checkOutDate) {
-          const d1 = new Date(String(checkInDate));
-          const d2 = new Date(String(checkOutDate));
-          const diffDays = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000));
-          units = diffDays;
-        }
+        // Hospedagem: preço por diária; passeios/serviços: preço por pessoa.
+        const units = listing.moduleType === 'accommodation' ? datas.noites : guests;
 
         const grossAmountCents = unitPriceCents * units;
         const split = calculateCommissionSplit({
@@ -245,7 +304,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           commissionBps: plan.commissionBps,
         });
 
-        const bookingCode = `FR-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+        const bookingCode = `FR-${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
         const paymentProvider = process.env.MERCADOPAGO_ACCESS_TOKEN
           ? 'mercadopago'
           : 'mercadopago_awaiting_credentials';
@@ -257,6 +316,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           userId: user.id,
           userUid: user.uid,
           listingId: listing.id,
+          merchantId: listing.merchantId,
           slotId: slotId ? Number(slotId) : null,
           checkInDate: String(checkInDate),
           checkOutDate: checkOutDate ? String(checkOutDate) : null,
@@ -273,6 +333,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           paymentProvider,
           paymentRef: null,
           status: 'pending_payment' as const,
+          expiresAt,
+          checkoutUrl: null as string | null,
           guestNotes: typeof guestNotes === 'string' ? guestNotes.slice(0, 400) : null,
           createdAt: nowIso,
           updatedAt: nowIso,
@@ -306,11 +368,26 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           sellerAccessToken,
           payerEmail: user.email,
           appUrl: getAppBaseUrl(),
+          expiresAt,
         });
         if (pref) checkoutUrl = pref.init_point;
       } catch (mpErr) {
         console.error('Mercado Pago preference failed:', mpErr);
       }
+      const bookingRef = adminDb.collection('bookings').doc(String(newBookingId));
+      if (!checkoutUrl) {
+        // Sem link de pagamento: desfaz a reserva e devolve as vagas (o cliente não fica preso).
+        await adminDb.runTransaction(async (tx) => {
+          const vaga = await lerVaga(tx, result.booking.slotId);
+          tx.update(bookingRef, { status: 'cancelled', updatedAt: new Date().toISOString(), cancelReason: 'checkout_unavailable' });
+          tx.set(adminDb.collection('payments').doc(String(newBookingId)), { status: 'cancelled' }, { merge: true });
+          if (vaga) tx.update(vaga.ref, { availableSpots: vaga.disponiveis + result.booking.guestsCount });
+        });
+        sendJson(res, 502, { error: 'O pagamento está indisponível no momento. Nenhum valor foi cobrado; tente novamente em alguns minutos.' });
+        return;
+      }
+      await bookingRef.set({ checkoutUrl }, { merge: true });
+      result.booking.checkoutUrl = checkoutUrl;
 
       await recordAuditLog({
         actorUserId: user.id,
@@ -324,34 +401,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         },
       });
 
-      await recordImmutableLedgerEntry({
-        operationType: 'booking_charge',
-        referenceCode: result.booking.bookingCode,
-        category: result.listing.moduleType,
-        breakdown: {
-          ruleCode: 'MARKETPLACE-BOOKING',
-          ruleName: `Reserva ${result.listing.moduleType}`,
-          supplierCostCents: result.booking.netMerchantCents,
-          platformRemunerationCents: result.booking.commissionCents,
-          paymentFeeCents: Math.round((result.booking.grossAmountCents * 399) / 10000),
-          taxCents: Math.round((result.booking.commissionCents * 600) / 10000),
-          discountCents: result.booking.discountCents,
-          finalClientCents: result.booking.grossAmountCents,
-          merchantPayoutCents: result.booking.netMerchantCents,
-          estimatedMarginCents:
-            result.booking.commissionCents -
-            Math.round((result.booking.grossAmountCents * 399) / 10000),
-        },
-        currency: result.booking.currency,
-      });
-
       const notifId = await nextSeqId('notifications');
       await adminDb.collection('notifications').doc(String(notifId)).set({
         id: notifId,
         userId: user.uid,
         numericUserId: user.id,
         title: `Reserva ${result.booking.bookingCode} registrada`,
-        body: `Sua reserva em "${result.listing.title}" aguarda confirmação de pagamento via Mercado Pago.`,
+        body: `Sua reserva em "${result.listing.title}" está guardada por ${PRAZO_PAGAMENTO_MIN} minutos. Conclua o pagamento no Mercado Pago para confirmar.`,
         kind: 'booking',
         category: 'booking',
         read: false,
@@ -364,19 +420,21 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         eventName: 'BOOKING_CREATED',
         title: `Monitorar confirmação de reserva ${result.booking.bookingCode}`,
         input: { bookingCode: result.booking.bookingCode },
-      });
+      }).catch(() => undefined);
 
       sendJson(res, 201, {
         booking: result.booking,
         checkoutUrl,
-        gatewayStatus: getPaymentGatewayStatus(),
-        message:
-          'Reserva criada com status pending_payment. A confirmação ocorre exclusivamente após aprovação do Mercado Pago via webhook assinado.',
+        message: `Reserva guardada por ${PRAZO_PAGAMENTO_MIN} minutos. Pague pelo Mercado Pago para confirmar.`,
       });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : '';
       if (msg === 'LISTING_UNAVAILABLE') {
         sendJson(res, 404, { error: 'Oferta indisponível para reserva.' });
+        return;
+      }
+      if (msg === 'SLOT_DATE_MISMATCH') {
+        sendJson(res, 400, { error: 'A data não confere com o horário escolhido. Escolha o horário de novo.' });
         return;
       }
       if (msg === 'CAPACITY_EXCEEDED' || msg === 'INSUFFICIENT_SPOTS') {
