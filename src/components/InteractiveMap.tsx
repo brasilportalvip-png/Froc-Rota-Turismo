@@ -301,7 +301,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
           </div>
 
           <div className="pt-4 mt-4 border-t border-[#111111]/10 text-xs text-[#111111]/70 font-medium">
-            Coordenadas reais integradas ao catálogo PostgreSQL com cálculo de distância e rotas Google Maps.
+            Localização real de cada destino, com distância e rota pelo Google Maps.
           </div>
         </div>
       </div>

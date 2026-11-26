@@ -46,7 +46,7 @@ export const EditorialDailySection: React.FC<EditorialDailySectionProps> = ({ in
       <div className="flex flex-wrap items-end justify-between gap-6 mb-8">
         <div>
           <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#FF1493]">
-            <span>📰 Curadoria Editorial · 5 Publicações Diárias Originais (SHA-256)</span>
+            <span>📰 Dicas e roteiros novos todos os dias</span>
           </div>
           <h2 className="text-3xl md:text-4xl font-extrabold text-[#111111] mt-1 tracking-tight">
             Jornal &amp; Guia Froc Rota
@@ -95,7 +95,7 @@ export const EditorialDailySection: React.FC<EditorialDailySectionProps> = ({ in
                 </div>
                 <div className="p-5 space-y-2">
                   <div className="flex items-center justify-between text-[11px] text-[#111111]/65 font-semibold">
-                    <span className="text-[#FF1493] font-bold">Edição Verificada</span>
+                    <span className="text-[#FF1493] font-bold">Guia Froc Rota</span>
                     <span className="inline-flex items-center gap-1 font-mono-tabular">
                       <Calendar className="w-3 h-3" />
                       {post.publishDate}
@@ -123,7 +123,7 @@ export const EditorialDailySection: React.FC<EditorialDailySectionProps> = ({ in
               <div className="px-5 py-3.5 border-t border-[#111111]/10 flex items-center justify-between text-xs bg-white">
                 <span className="text-[11px] text-[#111111]/70 inline-flex items-center gap-1 font-semibold">
                   <ShieldCheck className="w-3.5 h-3.5 text-[#111111]" />
-                  Original SHA-256
+                  Conteúdo original
                 </span>
                 <button
                   type="button"
@@ -160,9 +160,6 @@ export const EditorialDailySection: React.FC<EditorialDailySectionProps> = ({ in
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#111111]/65">
                 <span className="font-bold text-[#FF1493]">
                   {selectedPost.category} · {selectedPost.publishDate}
-                </span>
-                <span className="font-mono-tabular text-[11px] font-semibold">
-                  Hash editorial: {selectedPost.contentHash.slice(0, 12)}
                 </span>
               </div>
               <h3 className="text-2xl font-extrabold text-[#111111] leading-snug">

@@ -128,3 +128,16 @@ test('As matérias do blog nunca são apagadas pelo código', () => {
     assert.doesNotMatch(src, /collection\('posts'\)[\s\S]{0,120}\.delete\(/, f);
   }
 });
+
+test('Confidencial: tela pública sem simulador de markup, status de integrações ou números internos', async () => {
+  const fs = await import('node:fs');
+  const app = fs.readFileSync('src/App.tsx', 'utf8');
+  const travel = fs.readFileSync('src/components/TravelAndConciergeSection.tsx', 'utf8');
+  for (const bad of [/Corpo Autônomo/, /Modelos Pop-up/, /AnimatedCounter/, /SHA-256/, /Módulo 0/]) assert.equal(bad.test(app), false, String(bad));
+  for (const bad of [/Simulador/, /pricing\/preview/, /travel\/status/, /platformFeeCents/, /fxRate/, /Idempotency/, /Amadeus/]) assert.equal(bad.test(travel), false, String(bad));
+  const catalog = fs.readFileSync('api/catalog.ts', 'utf8');
+  assert.match(catalog, /route === '\/pricing\/preview'\) \{\n[^\n]*\n\s*const staff = await requireAdminContext/);
+  const { publicFlightResult } = await import('../api/_lib/travel.ts');
+  const out = JSON.stringify(publicFlightResult({ connected: true, provider: 'Duffel', integrations: [1], offers: [{ finalClientCents: 1000, platformFeeCents: 200, supplierBrlCents: 800, fxRate: 6, price: { total: '1', currency: 'EUR' } }] }));
+  assert.equal(/platformFeeCents|supplierBrlCents|fxRate|integrations|provider|"price"/.test(out), false);
+});

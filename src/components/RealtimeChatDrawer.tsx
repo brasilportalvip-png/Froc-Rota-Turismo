@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   Bot,
   MessageSquare,
   Paperclip,
@@ -8,9 +9,7 @@ import {
   Send,
   UserCheck,
 } from 'lucide-react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useApp } from '../context/AppContext.tsx';
-import { firestoreDb, handleFirestoreError, OperationType } from '../lib/firebase.ts';
 import { ChatConversation, ChatMessage } from '../types.ts';
 import { FuturisticModalHeader } from './DesignSystem.tsx';
 
@@ -20,19 +19,61 @@ interface RealtimeChatDrawerProps {
   initialSubject?: string;
 }
 
+/**
+ * Chat de atendimento.
+ * Toda leitura e escrita passa pela API do servidor (/api/chat/...), que confere o dono da conversa.
+ * As novidades chegam por consulta automática a cada poucos segundos — não depende das regras do
+ * Firestore no navegador (antes, um erro de permissão ali apagava a conversa da tela).
+ */
+const MESSAGES_POLL_MS = 4000;
+const LIST_POLL_MS = 15000;
+
+const ROLE_LABEL: Record<ChatMessage['senderRole'], string> = {
+  tourist: 'Cliente',
+  merchant: 'Parceiro',
+  admin: 'Equipe Froc Rota',
+  ai_agent: 'Assistente IA',
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  open: 'Aberta',
+  human_assigned: 'Com atendente',
+  resolved: 'Resolvida',
+};
+
+const CHANNEL_LABEL: Record<string, string> = {
+  tourist: 'Turista',
+  merchant: 'Parceiro',
+  admin: 'Equipe',
+  ai_handoff: 'Equipe',
+};
+
+function sameMessages(a: ChatMessage[], b: ChatMessage[]) {
+  if (a.length !== b.length) return false;
+  return a.every((m, i) => m.id === b[i].id && m.text === b[i].text);
+}
+
+function formatHour(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
 export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
   onClose,
   defaultChannel = 'tourist',
   initialSubject = '',
 }) => {
-  const { apiFetch, dbUser, firebaseUser, isAnyAdmin, requestLogin, notify } =
-    useApp();
+  const { apiFetch, dbUser, isAnyAdmin, requestLogin, notify } = useApp();
 
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedConv, setSelectedConv] = useState<ChatConversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [loadingList, setLoadingList] = useState(false);
+  const [loadingList, setLoadingList] = useState(true);
+  const [listError, setListError] = useState('');
+  const [mobileView, setMobileView] = useState<'list' | 'thread'>('thread');
 
   const [newSubject, setNewSubject] = useState(initialSubject);
   const [newMsgText, setNewMsgText] = useState('');
@@ -40,34 +81,37 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
   const [showAttach, setShowAttach] = useState(false);
   const [askAi, setAskAi] = useState(true);
   const [sending, setSending] = useState(false);
-  const [firestoreLiveCount, setFirestoreLiveCount] = useState<number | null>(null);
+  const [pendingText, setPendingText] = useState('');
 
-  const toIso = (val: unknown): string => {
-    if (typeof val === 'object' && val !== null && 'toDate' in val) {
-      const fn = (val as { toDate?: () => Date }).toDate;
-      if (typeof fn === 'function') return fn.call(val).toISOString();
-    }
-    return String(val || '');
-  };
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const firstListLoad = useRef(true);
 
-  const loadConversations = useCallback(async () => {
-    if (!dbUser) return;
-    setLoadingList(true);
-    try {
-      const q = searchTerm.trim() ? `?q=${encodeURIComponent(searchTerm.trim())}` : '';
-      const res = await apiFetch<{ conversations: ChatConversation[] }>(
-        `/api/chat/conversations${q}`
-      );
-      setConversations(res.conversations || []);
-      if (!selectedConv && res.conversations?.length > 0) {
-        setSelectedConv(res.conversations[0]);
+  const loadConversations = useCallback(
+    async (silent = false) => {
+      if (!dbUser) return;
+      if (!silent) setLoadingList(true);
+      try {
+        const q = searchTerm.trim() ? `?q=${encodeURIComponent(searchTerm.trim())}` : '';
+        const res = await apiFetch<{ conversations: ChatConversation[] }>(
+          `/api/chat/conversations${q}`
+        );
+        const list = res.conversations || [];
+        setConversations(list);
+        setListError('');
+        if (firstListLoad.current) {
+          firstListLoad.current = false;
+          setSelectedId((prev) => prev ?? (list[0]?.id ?? null));
+        }
+      } catch (err: unknown) {
+        if (!silent) {
+          setListError(err instanceof Error ? err.message : 'Erro ao carregar conversas.');
+        }
+      } finally {
+        if (!silent) setLoadingList(false);
       }
-    } catch (err: unknown) {
-      notify(err instanceof Error ? err.message : 'Erro ao carregar conversas.', 'error');
-    } finally {
-      setLoadingList(false);
-    }
-  }, [apiFetch, dbUser, notify, searchTerm, selectedConv]);
+    },
+    [apiFetch, dbUser, searchTerm]
+  );
 
   const loadMessages = useCallback(
     async (convId: number) => {
@@ -77,124 +121,62 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
           `/api/chat/conversations/${convId}/messages`
         );
         setSelectedConv(res.conversation);
-        setMessages(res.messages || []);
+        const next = res.messages || [];
+        setMessages((prev) => (sameMessages(prev, next) ? prev : next));
       } catch {
-        // ignore transient fetch errors
+        // falha passageira: a próxima consulta automática tenta de novo
       }
     },
     [apiFetch, dbUser]
   );
 
+  // Lista de conversas: carrega ao abrir/buscar e atualiza sozinha.
   useEffect(() => {
-    loadConversations();
-  }, [loadConversations]);
+    if (!dbUser) return;
+    loadConversations(false);
+    const t = window.setInterval(() => {
+      if (document.visibilityState === 'visible') loadConversations(true);
+    }, LIST_POLL_MS);
+    return () => window.clearInterval(t);
+  }, [dbUser, loadConversations]);
 
+  // Mensagens da conversa aberta: atualiza sozinha (respostas da equipe chegam aqui).
   useEffect(() => {
-    if (selectedConv?.id) {
-      loadMessages(selectedConv.id);
+    if (!selectedId) {
+      setMessages([]);
+      setSelectedConv(null);
+      return;
     }
-  }, [selectedConv?.id, loadMessages]);
+    setMessages([]);
+    loadMessages(selectedId);
+    const t = window.setInterval(() => {
+      if (document.visibilityState === 'visible') loadMessages(selectedId);
+    }, MESSAGES_POLL_MS);
+    return () => window.clearInterval(t);
+  }, [selectedId, loadMessages]);
 
-  // Firestore real-time listener on conversations scoped strictly to ownerUid or verified admin
   useEffect(() => {
-    if (!firebaseUser?.uid || !firebaseUser.emailVerified) return;
-    const convPath = 'conversations';
-    const q = isAnyAdmin
-      ? query(collection(firestoreDb, convPath))
-      : query(collection(firestoreDb, convPath), where('ownerUid', '==', firebaseUser.uid));
+    bottomRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'end' });
+  }, [messages.length, pendingText]);
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        setFirestoreLiveCount(snap.size);
-        const searchLower = searchTerm.trim().toLowerCase();
-        const mapped: ChatConversation[] = snap.docs
-          .map((d) => {
-            const raw = d.data() as Record<string, unknown>;
-            return {
-              id: Number(raw.id || d.id),
-              conversationCode: String(raw.conversationCode || ''),
-              ownerUserId: Number(raw.ownerUserId || 0),
-              ownerUid: String(raw.ownerUid || ''),
-              ownerName: String(raw.ownerName || ''),
-              channel: (raw.channel as ChatConversation['channel']) || 'tourist',
-              subject: String(raw.subject || ''),
-              status: (raw.status as ChatConversation['status']) || 'open',
-              unreadByOwner: Number(raw.unreadByOwner || 0),
-              unreadByStaff: Number(raw.unreadByStaff || 0),
-              lastMessageAt: toIso(raw.lastMessageAt || raw.updatedAt || raw.createdAt),
-            };
-          })
-          .filter((c) =>
-            searchLower
-              ? c.subject.toLowerCase().includes(searchLower) ||
-                c.ownerName.toLowerCase().includes(searchLower) ||
-                c.conversationCode.toLowerCase().includes(searchLower)
-              : true
-          )
-          .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+  const openConversation = (id: number) => {
+    setSelectedId(id);
+    setMobileView('thread');
+  };
 
-        setConversations(mapped);
-        setSelectedConv((prev) => {
-          if (!prev) return mapped[0] || null;
-          return mapped.find((c) => c.id === prev.id) || prev;
-        });
-      },
-      (err) => {
-        console.warn('Firestore chat snapshot warning:', err.message);
-        if (err.message.includes('insufficient permissions')) {
-          handleFirestoreError(err, OperationType.LIST, convPath);
-        }
-      }
+  const createConversation = async (subject: string): Promise<ChatConversation> => {
+    const res = await apiFetch<{ conversation: ChatConversation }>('/api/chat/conversations', {
+      method: 'POST',
+      body: JSON.stringify({ subject, channel: defaultChannel }),
+    });
+    setConversations((prev) =>
+      prev.some((c) => c.id === res.conversation.id) ? prev : [res.conversation, ...prev]
     );
-    return () => unsub();
-  }, [firebaseUser?.uid, firebaseUser?.emailVerified, isAnyAdmin, searchTerm]);
-
-  // Firestore real-time listener on messages subcollection of the active thread
-  useEffect(() => {
-    if (!firebaseUser?.uid || !firebaseUser.emailVerified || !selectedConv?.id) return;
-    if (!isAnyAdmin && selectedConv.ownerUid !== firebaseUser.uid) return;
-
-    const msgsPath = `conversations/${String(selectedConv.id)}/messages`;
-    const msgQuery = isAnyAdmin
-      ? query(collection(firestoreDb, msgsPath))
-      : query(
-          collection(firestoreDb, msgsPath),
-          where('conversationOwnerUid', '==', firebaseUser.uid)
-        );
-
-    const unsub = onSnapshot(
-      msgQuery,
-      (snap) => {
-        const mapped: ChatMessage[] = snap.docs
-          .map((d) => {
-            const raw = d.data() as Record<string, unknown>;
-            return {
-              id: Number(raw.id || d.id),
-              conversationId: Number(raw.conversationId || selectedConv.id),
-              senderUid: String(raw.senderUid || ''),
-              senderName: String(raw.senderName || ''),
-              senderRole: (raw.senderRole as ChatMessage['senderRole']) || 'tourist',
-              text: String(raw.text || ''),
-              attachmentUrl: raw.attachmentUrl ? String(raw.attachmentUrl) : null,
-              readByStaff: Boolean(raw.readByStaff),
-              createdAt: toIso(raw.createdAt),
-            };
-          })
-          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-
-        setMessages(mapped);
-      },
-      (err) => {
-        console.warn('Firestore messages snapshot warning:', err.message);
-        if (err.message.includes('insufficient permissions')) {
-          handleFirestoreError(err, OperationType.LIST, msgsPath);
-        }
-      }
-    );
-
-    return () => unsub();
-  }, [firebaseUser?.uid, firebaseUser?.emailVerified, isAnyAdmin, selectedConv?.id, selectedConv?.ownerUid]);
+    setSelectedConv(res.conversation);
+    setSelectedId(res.conversation.id);
+    setMobileView('thread');
+    return res.conversation;
+  };
 
   const handleCreateConversation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,22 +184,10 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
       await requestLogin();
       return;
     }
-    const subject = newSubject.trim() || 'Atendimento Froc Rota Turismo';
+    const subject = newSubject.trim() || 'Atendimento Froc Rota';
     try {
-      const res = await apiFetch<{ conversation: ChatConversation }>('/api/chat/conversations', {
-        method: 'POST',
-        body: JSON.stringify({
-          subject,
-          channel: defaultChannel,
-          initialMessage: `Olá! Gostaria de falar sobre: ${subject}`,
-        }),
-      });
+      await createConversation(subject);
       setNewSubject('');
-      setConversations((prev) =>
-        prev.some((c) => c.id === res.conversation.id) ? prev : [res.conversation, ...prev]
-      );
-      setSelectedConv(res.conversation);
-      notify('Nova conversa em tempo real iniciada.', 'success');
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : 'Erro ao iniciar atendimento.', 'error');
     }
@@ -225,55 +195,58 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
 
   const handleSendMessage = async (e: React.FormEvent, requestHumanHandoff = false) => {
     e.preventDefault();
-    if (!selectedConv) return;
-    if (!newMsgText.trim() && !requestHumanHandoff) return;
+    if (sending) return;
+    const text = newMsgText.trim() || (requestHumanHandoff ? 'Quero falar com um atendente.' : '');
+    if (!text) return;
 
     setSending(true);
+    setPendingText(text);
+    setNewMsgText('');
     try {
+      // Sem conversa aberta: a primeira mensagem já cria o atendimento.
+      let convId = selectedId;
+      if (!convId) {
+        const conv = await createConversation(text.slice(0, 70));
+        convId = conv.id;
+      }
       const res = await apiFetch<{ messages: ChatMessage[] }>(
-        `/api/chat/conversations/${selectedConv.id}/messages`,
+        `/api/chat/conversations/${convId}/messages`,
         {
           method: 'POST',
           body: JSON.stringify({
-            text: newMsgText.trim() || (requestHumanHandoff ? 'Solicito atendimento humano.' : ''),
+            text,
             attachmentUrl: attachmentUrl.trim() || undefined,
-            askAi: !requestHumanHandoff && askAi,
+            askAi: !requestHumanHandoff && !isAnyAdmin && askAi,
             requestHumanHandoff,
           }),
         }
       );
       if (res.messages?.length) {
         setMessages((prev) => {
-          const existingIds = new Set(prev.map((m) => m.id));
-          const merged = [...prev];
-          for (const msg of res.messages) {
-            if (!existingIds.has(msg.id)) merged.push(msg);
-          }
-          return merged;
+          const ids = new Set(prev.map((m) => m.id));
+          return [...prev, ...res.messages.filter((m) => !ids.has(m.id))];
         });
       }
-      setNewMsgText('');
       setAttachmentUrl('');
       setShowAttach(false);
-      await loadMessages(selectedConv.id);
-      if (requestHumanHandoff) {
-        notify('Atendente humano acionado na central Froc Rota.', 'info');
-      }
+      await loadMessages(convId);
+      loadConversations(true);
+      if (requestHumanHandoff) notify('Pronto! Um atendente vai responder nesta conversa.', 'info');
     } catch (err: unknown) {
+      setNewMsgText(text);
       notify(err instanceof Error ? err.message : 'Falha ao enviar mensagem.', 'error');
     } finally {
+      setPendingText('');
       setSending(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[90] bg-black/65 backdrop-blur-xs overflow-y-auto p-3 md:p-6 flex justify-center items-center">
-      <div className="w-full max-w-5xl h-[85vh] bg-[#FFFFFF] rounded-2xl border-2 border-[#111111] shadow-2xl flex flex-col overflow-hidden froc-animate-modal">
+    <div className="fixed inset-0 z-[90] bg-black/65 backdrop-blur-xs overflow-y-auto p-2 md:p-6 flex justify-center items-center">
+      <div className="w-full max-w-5xl h-[92vh] md:h-[85vh] bg-[#FFFFFF] rounded-2xl border-2 border-[#111111] shadow-2xl flex flex-col overflow-hidden froc-animate-modal">
         <FuturisticModalHeader
-          title="Central de Chat em Tempo Real"
-          subtitle={`Cloud Firestore em Tempo Real · Froc Rota AI & Equipe Humana${
-            firestoreLiveCount !== null ? ' · Sync ativo' : ''
-          }`}
+          title="Atendimento Froc Rota"
+          subtitle="Assistente IA na hora e equipe humana quando você precisar"
           icon={<MessageSquare className="w-5 h-5" />}
           onBack={onClose}
           onClose={onClose}
@@ -283,11 +256,11 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
             <MessageSquare className="w-10 h-10 text-[#111111]" />
             <h3 className="text-lg font-extrabold text-[#111111]">
-              Entre para conversar com a Froc Rota em tempo real
+              Entre para conversar com a Froc Rota
             </h3>
             <p className="text-sm text-[#111111]/75 max-w-md">
-              Histórico completo de mensagens entre turistas, parceiros, IA e atendentes humanos
-              com notificações instantâneas e envio de comprovantes.
+              Tire dúvidas sobre passeios, hospedagens, voos e reservas. Seu histórico fica salvo
+              na sua conta.
             </p>
             <button
               type="button"
@@ -299,8 +272,13 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
           </div>
         ) : (
           <div className="flex-1 grid grid-cols-1 md:grid-cols-12 min-h-0">
-            {/* Sidebar */}
-            <div className="md:col-span-4 border-r border-[#111111]/15 flex flex-col min-h-0 bg-white">
+            {/* Lista de conversas */}
+            <div
+              data-testid="chat-list"
+              className={`md:col-span-4 border-r border-[#111111]/15 flex-col min-h-0 bg-white ${
+                mobileView === 'list' ? 'flex' : 'hidden md:flex'
+              }`}
+            >
               <div className="p-3 border-b border-[#111111]/15 space-y-2">
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-[#111111]/70 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -315,7 +293,7 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
                   <input
                     value={newSubject}
                     onChange={(e) => setNewSubject(e.target.value)}
-                    placeholder="Novo assunto de atendimento..."
+                    placeholder="Assunto da nova conversa..."
                     className="flex-1 px-2.5 py-1.5 rounded-lg border border-[#111111]/15 bg-white text-xs"
                   />
                   <button
@@ -324,29 +302,40 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#111111] text-[#39FF14] text-xs font-semibold shrink-0"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>Abrir</span>
+                    <span>Nova</span>
                   </button>
                 </form>
               </div>
 
               <div className="flex-1 overflow-y-auto divide-y divide-[#111111]/10">
                 {loadingList ? (
-                  <div className="p-4 text-xs text-[#111111]/70">Buscando conversas...</div>
+                  <div className="p-4 text-xs text-[#111111]/70">Carregando conversas...</div>
+                ) : listError ? (
+                  <div className="p-4 text-xs text-red-700 space-y-2">
+                    <p>{listError}</p>
+                    <button
+                      type="button"
+                      onClick={() => loadConversations(false)}
+                      className="underline font-semibold"
+                    >
+                      Tentar de novo
+                    </button>
+                  </div>
                 ) : conversations.length === 0 ? (
                   <div className="p-5 text-xs text-[#111111]/70 text-center">
-                    Nenhuma conversa aberta. Digite um assunto acima e clique em Abrir.
+                    Nenhuma conversa ainda. Escreva sua mensagem ao lado para começar.
                   </div>
                 ) : (
                   conversations.map((conv) => {
                     const unread = isAnyAdmin ? conv.unreadByStaff : conv.unreadByOwner;
-                    const active = selectedConv?.id === conv.id;
+                    const active = selectedId === conv.id;
                     return (
                       <button
                         key={conv.id}
                         type="button"
-                        onClick={() => setSelectedConv(conv)}
+                        onClick={() => openConversation(conv.id)}
                         className={`w-full text-left p-3.5 transition-colors ${
-                          active ? 'bg-white border-l-4 border-[#111111]' : 'hover:bg-white/70'
+                          active ? 'bg-white border-l-4 border-[#111111]' : 'hover:bg-[#111111]/5'
                         }`}
                       >
                         <div className="flex items-center justify-between text-[11px] text-[#111111]/70">
@@ -359,15 +348,17 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
                                 {unread}
                               </span>
                             )}
-                            <span>{conv.status === 'human_assigned' ? 'Humano' : conv.status}</span>
+                            <span>{STATUS_LABEL[conv.status] || conv.status}</span>
                           </div>
                         </div>
                         <div className="text-xs font-semibold text-[#111111] mt-1 line-clamp-1">
                           {conv.subject}
                         </div>
-                        <div className="text-[11px] text-[#111111]/70 mt-0.5">
-                          {conv.ownerName} · canal {conv.channel}
-                        </div>
+                        {isAnyAdmin && (
+                          <div className="text-[11px] text-[#111111]/70 mt-0.5">
+                            {conv.ownerName} · {CHANNEL_LABEL[conv.channel] || conv.channel}
+                          </div>
+                        )}
                       </button>
                     );
                   })
@@ -375,134 +366,182 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
               </div>
             </div>
 
-            {/* Thread Area */}
-            <div className="md:col-span-8 flex flex-col min-h-0">
-              {!selectedConv ? (
-                <div className="flex-1 flex items-center justify-center p-6 text-sm text-[#111111]/70">
-                  Selecione uma conversa ao lado ou abra um novo atendimento.
-                </div>
-              ) : (
-                <>
-                  <div className="px-5 py-3 border-b border-[#111111]/15 flex flex-wrap items-center justify-between gap-2 bg-white">
-                    <div>
-                      <div className="text-sm font-semibold text-[#111111]">
-                        {selectedConv.subject}
-                      </div>
-                      <div className="text-[11px] text-[#111111]/70 font-mono-tabular">
-                        Protocolo {selectedConv.conversationCode} · {selectedConv.ownerName} ·{' '}
-                        {selectedConv.status}
-                      </div>
-                    </div>
-                    {!isAnyAdmin && selectedConv.status !== 'human_assigned' && (
-                      <button
-                        type="button"
-                        onClick={(e) => handleSendMessage(e, true)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#111111] text-[#111111] text-xs font-semibold hover:bg-white"
-                      >
-                        <UserCheck className="w-3.5 h-3.5" />
-                        <span>Falar com Atendente Humano</span>
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-white">
-                    {messages.map((m) => {
-                      const isMe = m.senderUid === dbUser.uid;
-                      const isAi = m.senderRole === 'ai_agent';
-                      return (
-                        <div
-                          key={m.id}
-                          className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
-                        >
-                          <div className="text-[10px] text-[#111111]/70 mb-1 px-1">
-                            {m.senderName} ({m.senderRole === 'ai_agent' ? 'IA Especialista' : m.senderRole})
-                          </div>
-                          <div
-                            className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed border-2 ${
-                              isMe
-                                ? 'bg-[#111111] text-white border-[#39FF14]'
-                                : isAi
-                                ? 'bg-[#FFFFFF] text-[#111111] border-[#FFD700]'
-                                : 'bg-[#FFFFFF] text-[#111111] border-[#111111]/20'
-                            }`}
-                          >
-                            <div className="whitespace-pre-wrap">{m.text}</div>
-                            {m.attachmentUrl && (
-                              <a
-                                href={m.attachmentUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-block mt-2 underline font-semibold text-[11px]"
-                              >
-                                Abrir anexo HTTPS
-                              </a>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <form
-                    onSubmit={(e) => handleSendMessage(e, false)}
-                    className="p-3 border-t border-[#111111]/15 bg-white space-y-2"
+            {/* Conversa */}
+            <div
+              data-testid="chat-thread"
+              className={`md:col-span-8 flex-col min-h-0 ${
+                mobileView === 'thread' ? 'flex' : 'hidden md:flex'
+              }`}
+            >
+              <div className="px-4 py-3 border-b border-[#111111]/15 flex flex-wrap items-center justify-between gap-2 bg-white">
+                <div className="flex items-center gap-2 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setMobileView('list')}
+                    className="md:hidden inline-flex items-center gap-1 text-xs font-semibold text-[#111111] shrink-0"
+                    aria-label="Ver minhas conversas"
                   >
-                    {showAttach && (
-                      <input
-                        type="url"
-                        value={attachmentUrl}
-                        onChange={(e) => setAttachmentUrl(e.target.value)}
-                        placeholder="Cole um link HTTPS de comprovante, voucher ou foto..."
-                        className="w-full px-3 py-1.5 rounded-xl border border-[#111111]/25 text-xs"
-                      />
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Conversas</span>
+                  </button>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-[#111111] truncate">
+                      {selectedConv?.subject || 'Nova conversa'}
+                    </div>
+                    {selectedConv && (
+                      <div className="text-[11px] text-[#111111]/70 font-mono-tabular">
+                        Protocolo {selectedConv.conversationCode} ·{' '}
+                        {STATUS_LABEL[selectedConv.status] || selectedConv.status}
+                        {isAnyAdmin ? ` · ${selectedConv.ownerName}` : ''}
+                      </div>
                     )}
+                  </div>
+                </div>
+                {!isAnyAdmin && selectedConv && selectedConv.status !== 'human_assigned' && (
+                  <button
+                    type="button"
+                    disabled={sending}
+                    onClick={(e) => handleSendMessage(e, true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#111111] text-[#111111] text-xs font-semibold hover:bg-[#111111]/5 disabled:opacity-60"
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>Falar com atendente</span>
+                  </button>
+                )}
+              </div>
 
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#111111]/70">
-                      {!isAnyAdmin ? (
-                        <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={askAi}
-                            onChange={(e) => setAskAi(e.target.checked)}
-                          />
-                          <Bot className="w-3.5 h-3.5 text-[#111111]" />
-                          <span>Resposta instantânea com Froc Rota AI</span>
-                        </label>
-                      ) : (
-                        <span className="font-bold text-[#111111] bg-[#39FF14] px-2 py-0.5 rounded">
-                          Respondendo como Atendente Oficial Froc Rota
-                        </span>
-                      )}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-white">
+                {!selectedId && messages.length === 0 && !pendingText && (
+                  <div className="h-full flex flex-col items-center justify-center text-center gap-2 text-[#111111]/75 px-4">
+                    <Bot className="w-8 h-8 text-[#111111]" />
+                    <p className="text-sm font-semibold text-[#111111]">
+                      Olá{dbUser.name ? `, ${dbUser.name.split(' ')[0]}` : ''}! Como podemos ajudar?
+                    </p>
+                    <p className="text-xs max-w-sm">
+                      Escreva sua dúvida abaixo. O assistente responde na hora e, se preferir, um
+                      atendente da equipe continua a conversa.
+                    </p>
+                  </div>
+                )}
 
-                      <button
-                        type="button"
-                        onClick={() => setShowAttach((v) => !v)}
-                        className="inline-flex items-center gap-1 text-[#FF1493] font-bold hover:underline"
+                {messages.map((m) => {
+                  const isMe = m.senderUid === dbUser.uid;
+                  const isAi = m.senderRole === 'ai_agent';
+                  return (
+                    <div key={m.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                      <div className="text-[10px] text-[#111111]/70 mb-1 px-1">
+                        {isMe
+                          ? 'Você'
+                          : m.senderRole === 'admin' && !isAnyAdmin
+                          ? 'Equipe Froc Rota'
+                          : m.senderRole === 'ai_agent'
+                          ? 'Assistente IA'
+                          : `${m.senderName} · ${ROLE_LABEL[m.senderRole] || ''}`}
+                        {m.createdAt ? ` · ${formatHour(m.createdAt)}` : ''}
+                      </div>
+                      <div
+                        className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed border-2 ${
+                          isMe
+                            ? 'bg-[#111111] text-white border-[#39FF14]'
+                            : isAi
+                            ? 'bg-[#FFFFFF] text-[#111111] border-[#FFD700]'
+                            : 'bg-[#FFFFFF] text-[#111111] border-[#111111]/20'
+                        }`}
                       >
-                        <Paperclip className="w-3.5 h-3.5" />
-                        <span>{showAttach ? 'Ocultar anexo' : 'Anexar link HTTPS'}</span>
-                      </button>
+                        <div className="whitespace-pre-wrap break-words">{m.text}</div>
+                        {m.attachmentUrl && (
+                          <a
+                            href={m.attachmentUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-block mt-2 underline font-semibold text-[11px]"
+                          >
+                            Abrir anexo
+                          </a>
+                        )}
+                      </div>
                     </div>
+                  );
+                })}
 
-                    <div className="flex gap-2">
+                {pendingText && (
+                  <>
+                    <div className="flex flex-col items-end opacity-70">
+                      <div className="text-[10px] text-[#111111]/70 mb-1 px-1">Você · enviando...</div>
+                      <div className="max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm border-2 bg-[#111111] text-white border-[#39FF14] whitespace-pre-wrap break-words">
+                        {pendingText}
+                      </div>
+                    </div>
+                    {askAi && !isAnyAdmin && (
+                      <div className="flex items-center gap-1.5 text-xs text-[#111111]/70" data-testid="chat-typing">
+                        <Bot className="w-3.5 h-3.5" />
+                        <span>Assistente digitando...</span>
+                      </div>
+                    )}
+                  </>
+                )}
+                <div ref={bottomRef} />
+              </div>
+
+              <form
+                onSubmit={(e) => handleSendMessage(e, false)}
+                className="p-3 border-t border-[#111111]/15 bg-white space-y-2"
+              >
+                {showAttach && (
+                  <input
+                    type="url"
+                    value={attachmentUrl}
+                    onChange={(e) => setAttachmentUrl(e.target.value)}
+                    placeholder="Cole o link (https) do comprovante, voucher ou foto..."
+                    className="w-full px-3 py-1.5 rounded-xl border border-[#111111]/25 text-xs"
+                  />
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#111111]/70">
+                  {!isAnyAdmin ? (
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
                       <input
-                        value={newMsgText}
-                        onChange={(e) => setNewMsgText(e.target.value)}
-                        placeholder="Escreva sua mensagem em tempo real..."
-                        className="flex-1 min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[#111111]/25 text-sm"
+                        type="checkbox"
+                        checked={askAi}
+                        onChange={(e) => setAskAi(e.target.checked)}
                       />
-                      <button
-                        type="submit"
-                        disabled={sending}
-                        className="min-h-[44px] inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl froc-btn-neon text-xs font-extrabold disabled:opacity-60"
-                      >
-                        <Send className="w-3.5 h-3.5" />
-                        <span>{sending ? 'Enviando...' : 'Enviar'}</span>
-                      </button>
-                    </div>
-                  </form>
-                </>
-              )}
+                      <Bot className="w-3.5 h-3.5 text-[#111111]" />
+                      <span>Resposta na hora com o assistente IA</span>
+                    </label>
+                  ) : (
+                    <span className="font-bold text-[#111111] bg-[#39FF14] px-2 py-0.5 rounded">
+                      Respondendo como equipe Froc Rota
+                    </span>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setShowAttach((v) => !v)}
+                    className="inline-flex items-center gap-1 text-[#FF1493] font-bold hover:underline"
+                  >
+                    <Paperclip className="w-3.5 h-3.5" />
+                    <span>{showAttach ? 'Ocultar anexo' : 'Anexar link'}</span>
+                  </button>
+                </div>
+
+                <div className="flex gap-2">
+                  <input
+                    value={newMsgText}
+                    onChange={(e) => setNewMsgText(e.target.value)}
+                    placeholder="Escreva sua mensagem..."
+                    maxLength={2000}
+                    className="flex-1 min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[#111111]/25 text-sm"
+                  />
+                  <button
+                    type="submit"
+                    disabled={sending || !newMsgText.trim()}
+                    className="min-h-[44px] inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl froc-btn-neon text-xs font-extrabold disabled:opacity-60"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{sending ? 'Enviando...' : 'Enviar'}</span>
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}

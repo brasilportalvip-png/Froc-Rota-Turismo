@@ -10,7 +10,6 @@ import { PWAInstallButton } from './components/PWAInstallButton.tsx';
 import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { EditorialDailySection } from './components/EditorialDailySection.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
-import { AnimatedCounter } from './components/DesignSystem.tsx';
 import { PromoPopupEngine } from './components/PromoPopupEngine.tsx';
 import { VitrineBrasil } from './components/VitrineBrasil.tsx';
 import { VitrinePremium } from './components/VitrinePremium.tsx';
@@ -362,9 +361,9 @@ function FrocRotaPlatform() {
             <img
               src="/logo-emblema.png"
               alt="Logotipo Froc Rota Turismo"
-              width={36}
-              height={36}
-              className="w-9 h-9 rounded-lg shrink-0"
+              width={40}
+              height={40}
+              className="w-10 h-10 object-contain shrink-0"
             />
             <span>Froc Rota</span>
             <span className="text-[10px] font-mono-tabular px-1.5 py-0.5 rounded bg-[#111111] text-[#FFD700] font-bold">
@@ -585,64 +584,26 @@ function FrocRotaPlatform() {
           </div>
         </section>
 
-        {/* ANIMATED ECOSYSTEM METRICS STRIP */}
-        <section className="bg-[#FFFFFF] border-b border-[#111111]/10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="p-4 rounded-2xl border border-[#111111]/15 bg-[#FFFFFF] flex items-center justify-between">
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-[#111111]/65">
-                  🤖 Corpo Autônomo IA
-                </div>
-                <div className="text-2xl font-extrabold text-[#111111] mt-0.5">
-                  <AnimatedCounter value={200} suffix="+" />
-                </div>
-              </div>
-              <span className="px-2 py-1 rounded-md bg-[#39FF14] text-[#111111] text-[10px] font-extrabold border border-[#111111]">
-                12 DEPTS
-              </span>
-            </div>
-
-            <div className="p-4 rounded-2xl border border-[#111111]/15 bg-[#FFFFFF] flex items-center justify-between">
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-[#111111]/65">
-                  📣 Modelos Pop-up
-                </div>
-                <div className="text-2xl font-extrabold text-[#111111] mt-0.5">
-                  <AnimatedCounter value={54} suffix=" modelos" />
+        {/* BENEFÍCIOS PARA O CLIENTE (sem números internos da operação) */}
+        <section className="bg-[#FFFFFF] border-b border-[#111111]/10" data-testid="beneficios-strip">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {[
+              { icon: '🛡️', title: 'Parceiros verificados', text: 'Identidade e documentos conferidos' },
+              { icon: '💳', title: 'Pagamento seguro', text: 'Processado pelo Mercado Pago' },
+              { icon: '💬', title: 'Atendimento de verdade', text: 'Assistente IA e equipe humana' },
+              { icon: '🇧🇷', title: 'Preços em reais', text: 'Sem surpresa na hora de pagar' },
+            ].map((b) => (
+              <div
+                key={b.title}
+                className="p-4 rounded-2xl border border-[#111111]/15 bg-[#FFFFFF] flex items-start gap-3"
+              >
+                <span className="text-2xl leading-none" aria-hidden="true">{b.icon}</span>
+                <div>
+                  <div className="text-sm font-extrabold text-[#111111]">{b.title}</div>
+                  <div className="text-xs text-[#111111]/70 mt-0.5">{b.text}</div>
                 </div>
               </div>
-              <span className="px-2 py-1 rounded-md bg-[#FF1493] text-[#FFFFFF] text-[10px] font-extrabold">
-                ATIVOS
-              </span>
-            </div>
-
-            <div className="p-4 rounded-2xl border border-[#111111]/15 bg-[#FFFFFF] flex items-center justify-between">
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-[#111111]/65">
-                  📰 Publicações Diárias
-                </div>
-                <div className="text-2xl font-extrabold text-[#111111] mt-0.5">
-                  <AnimatedCounter value={5} suffix="/dia" />
-                </div>
-              </div>
-              <span className="px-2 py-1 rounded-md bg-[#FFD700] text-[#111111] text-[10px] font-extrabold border border-[#111111]">
-                SHA-256
-              </span>
-            </div>
-
-            <div className="p-4 rounded-2xl border border-[#111111]/15 bg-[#FFFFFF] flex items-center justify-between">
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-[#111111]/65">
-                  🛡️ Destinos &amp; Ofertas
-                </div>
-                <div className="text-2xl font-extrabold text-[#111111] mt-0.5">
-                  <AnimatedCounter value={destinations.length + listings.length} />
-                </div>
-              </div>
-              <span className="px-2 py-1 rounded-md bg-[#111111] text-[#39FF14] text-[10px] font-extrabold">
-                REAIS
-              </span>
-            </div>
+            ))}
           </div>
         </section>
 
@@ -665,7 +626,7 @@ function FrocRotaPlatform() {
             <div className="flex flex-wrap items-end justify-between gap-6 mb-8">
               <div>
                 <div className="inline-flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-[#FF1493]">
-                  <span>🧭 Módulo 01 · Bússola Turística Nacional</span>
+                  <span>🧭 Destinos pelo Brasil</span>
                 </div>
                 <h2 className="text-3xl md:text-4xl font-extrabold text-[#111111] mt-1">
                   {t.destinationsTitle}
@@ -820,7 +781,7 @@ function FrocRotaPlatform() {
             <div className="flex flex-wrap items-end justify-between gap-6 mb-6">
               <div>
                 <div className="text-xs font-extrabold uppercase tracking-wider text-[#FF1493]">
-                  💎 Módulos 02, 03 e 04 · Parceiros Verificados
+                  💎 Parceiros Verificados
                 </div>
                 <h2 className="text-3xl md:text-4xl font-extrabold text-[#111111] mt-1">
                   {t.marketplaceTitle}
@@ -1041,14 +1002,13 @@ function FrocRotaPlatform() {
           <div>
             <div className="font-display text-base font-extrabold text-[#111111] inline-flex items-center gap-2">
               <img
-                src="/logo-emblema.png"
-                alt=""
-                width={28}
-                height={28}
+                src="/logo-froc-rota.png"
+                alt="Froc Rota Turismo"
+                width={110}
+                height={120}
                 loading="lazy"
-                className="w-7 h-7 rounded-md shrink-0"
+                className="w-[110px] h-auto shrink-0"
               />
-              <span>Froc Rota Turismo 2030+</span>
             </div>
             <div className="mt-1 font-semibold">{t.slogan}</div>
           </div>
