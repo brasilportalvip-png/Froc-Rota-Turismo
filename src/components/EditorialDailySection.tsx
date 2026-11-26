@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BookOpen, Calendar, ShieldCheck } from 'lucide-react';
 import { EditorialPost } from '../types.ts';
 import { ResilientImage } from './ResilientImage.tsx';
+import { trackText } from '../lib/intent.ts';
 import { FuturisticModalHeader } from './DesignSystem.tsx';
 
 interface EditorialDailySectionProps {
@@ -12,6 +13,15 @@ export const EditorialDailySection: React.FC<EditorialDailySectionProps> = ({ in
   const [posts, setPosts] = useState<EditorialPost[]>([]);
   const [category, setCategory] = useState<string>('all');
   const [selectedPost, setSelectedPost] = useState<EditorialPost | null>(null);
+
+  // Leitura conta como interesse no destino; leitura longa (25s+) conta mais.
+  useEffect(() => {
+    if (!selectedPost) return;
+    const text = `${selectedPost.title} ${selectedPost.summary || ''} ${selectedPost.body.slice(0, 600)}`;
+    trackText(text, 'leitura');
+    const t = setTimeout(() => trackText(text, 'leitura-longa'), 25000);
+    return () => clearTimeout(t);
+  }, [selectedPost]);
 
   useEffect(() => {
     fetch('/api/posts')
@@ -92,10 +102,20 @@ export const EditorialDailySection: React.FC<EditorialDailySectionProps> = ({ in
                     </span>
                   </div>
                   <h3 className="text-lg font-extrabold text-[#111111] leading-snug">
-                    {post.title}
+                    {/* Link real para o Google seguir; no site abre a leitura sem sair da página. */}
+                    <a
+                      href={`/blog/${post.slug}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setSelectedPost(post);
+                      }}
+                      className="hover:underline"
+                    >
+                      {post.title}
+                    </a>
                   </h3>
                   <p className="text-xs text-[#111111]/75 line-clamp-3 leading-relaxed">
-                    {post.summary}
+                    {post.summary || post.body.replace(/^##\s.*$/gm, '').slice(0, 160)}
                   </p>
                 </div>
               </div>
@@ -148,9 +168,21 @@ export const EditorialDailySection: React.FC<EditorialDailySectionProps> = ({ in
               <h3 className="text-2xl font-extrabold text-[#111111] leading-snug">
                 {selectedPost.title}
               </h3>
-              <p className="text-sm font-semibold text-[#111111]/80">{selectedPost.summary}</p>
-              <div className="pt-4 border-t border-[#111111]/10 text-sm text-[#111111] leading-relaxed whitespace-pre-line">
-                {selectedPost.body}
+              {selectedPost.summary && <p className="text-sm font-semibold text-[#111111]/80">{selectedPost.summary}</p>}
+              <div className="pt-4 border-t border-[#111111]/10 text-sm text-[#111111] leading-relaxed space-y-3">
+                {selectedPost.body
+                  .split(/\n+/)
+                  .map((l) => l.trim())
+                  .filter(Boolean)
+                  .map((l, i) =>
+                    /^#{2,3}\s/.test(l) ? (
+                      <h4 key={i} className="text-base font-extrabold pt-2">
+                        {l.replace(/^#{2,3}\s/, '')}
+                      </h4>
+                    ) : (
+                      <p key={i}>{l}</p>
+                    )
+                  )}
               </div>
               {selectedPost.keywordsJson?.length > 0 && (
                 <div className="pt-4 border-t border-[#111111]/10 text-xs text-[#111111]/65">
@@ -158,6 +190,12 @@ export const EditorialDailySection: React.FC<EditorialDailySectionProps> = ({ in
                 </div>
               )}
               <div className="pt-4 border-t border-[#111111]/10 flex justify-end gap-2">
+                <a
+                  href={`/blog/${selectedPost.slug}`}
+                  className="px-3 py-2 rounded-lg border border-[#111111]/25 text-xs font-bold text-[#111111]"
+                >
+                  Página do artigo
+                </a>
                 <button
                   type="button"
                   onClick={() => setSelectedPost(null)}

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { adminAuth, adminDb } from './_lib/firebase-admin.js';
 import { agentVerifyMerchant } from './_lib/agent-jobs.js';
+import { buildPartnerInvite } from './_lib/prospects.js';
 import { dispatchAgentTask, ensure200AgentsSeeded } from './_lib/agents.js';
 import { recordAuditLog } from './_lib/audit.js';
 import { requireAdminContext } from './_lib/auth.js';
@@ -433,6 +434,101 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } catch (error) {
       console.error('PATCH review error:', error);
       sendJson(res, 500, { error: 'Erro ao atualizar avaliação.' });
+    }
+    return;
+  }
+
+
+  // ========================
+  // RADAR DE PARCEIROS (negócios reais encontrados no Google Maps para convite)
+  // Só o place_id do Google fica guardado (regra do Google Maps); os dados são lidos na hora.
+  // ========================
+  if (req.method === 'GET' && route === '/admin/prospects') {
+    const ctx = await requireAdminContext(req, res, 'merchants');
+    if (!ctx) return;
+    try {
+      const rows = await getAllDocs<Record<string, unknown>>('prospects');
+      rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      sendJson(res, 200, { prospects: rows.slice(0, 300) });
+    } catch (error) {
+      console.error('GET prospects error:', error);
+      sendJson(res, 500, { error: 'Erro ao carregar o radar.' });
+    }
+    return;
+  }
+  if (req.method === 'POST' && route === '/admin/prospects') {
+    const ctx = await requireAdminContext(req, res, 'merchants');
+    if (!ctx) return;
+    try {
+      const body = await parseJsonBody<{ placeId?: string; destino?: string; categoria?: string }>(req);
+      const placeId = String(body.placeId || '').trim();
+      if (!/^[A-Za-z0-9_-]{10,300}$/.test(placeId)) {
+        sendJson(res, 400, { error: 'Lugar inválido.' });
+        return;
+      }
+      const dup = await adminDb.collection('prospects').where('placeId', '==', placeId).limit(1).get();
+      if (!dup.empty) {
+        sendJson(res, 409, { error: 'Este negócio já está no radar.' });
+        return;
+      }
+      const id = await nextSeqId('prospects');
+      const row = {
+        id,
+        placeId,
+        destino: String(body.destino || '').slice(0, 60),
+        categoria: String(body.categoria || '').slice(0, 30),
+        status: 'novo',
+        note: '',
+        createdByEmail: ctx.dbUser.email,
+        createdAt: new Date().toISOString(),
+      };
+      await adminDb.collection('prospects').doc(String(id)).set(row);
+      sendJson(res, 201, { prospect: row });
+    } catch (error) {
+      console.error('POST prospects error:', error);
+      sendJson(res, 500, { error: 'Erro ao salvar no radar.' });
+    }
+    return;
+  }
+  const prospectMatch = route.match(/^\/admin\/prospects\/(\d+)$/);
+  if (req.method === 'PATCH' && prospectMatch) {
+    const ctx = await requireAdminContext(req, res, 'merchants');
+    if (!ctx) return;
+    try {
+      const body = await parseJsonBody<{ status?: string; note?: string }>(req);
+      const allowed = ['novo', 'contatado', 'interessado', 'recusou', 'anunciante'];
+      const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+      if (body.status && allowed.includes(body.status)) updates.status = body.status;
+      if (typeof body.note === 'string') updates.note = body.note.slice(0, 500);
+      await adminDb.collection('prospects').doc(prospectMatch[1]).set(updates, { merge: true });
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      console.error('PATCH prospect error:', error);
+      sendJson(res, 500, { error: 'Erro ao atualizar.' });
+    }
+    return;
+  }
+  if (req.method === 'POST' && route === '/admin/prospects/invite') {
+    const ctx = await requireAdminContext(req, res, 'merchants');
+    if (!ctx) return;
+    try {
+      const body = await parseJsonBody<{ businessName?: string; destino?: string; categoria?: string }>(req);
+      const text = await buildPartnerInvite({
+        businessName: String(body.businessName || '').slice(0, 80),
+        destinoSlug: String(body.destino || ''),
+        categoria: String(body.categoria || ''),
+      });
+      await dispatchAgentTask({
+        department: 'Anunciantes e Anúncios',
+        triggerType: 'event',
+        eventName: 'PARTNER_INVITE_DRAFT',
+        title: `Convite para ${String(body.businessName || 'parceiro').slice(0, 60)}`,
+        input: { destino: body.destino, categoria: body.categoria },
+      });
+      sendJson(res, 200, { text });
+    } catch (error) {
+      console.error('POST invite error:', error);
+      sendJson(res, 500, { error: 'Erro ao gerar convite.' });
     }
     return;
   }

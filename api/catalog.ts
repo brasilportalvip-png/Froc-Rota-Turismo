@@ -1,4 +1,6 @@
+import { DESTINOS_BRASIL } from './_lib/brasil-destinos.js';
 import { adminDb } from './_lib/firebase-admin.js';
+import { buildIntentSuggestion } from './_lib/intent.js';
 import { askFrocRotaAI } from './_lib/ai.js';
 import { optionalAuthenticateRequest } from './_lib/auth.js';
 import { getAllDocs, nextSeqId } from './_lib/firestore-helpers.js';
@@ -94,6 +96,57 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   const route = getRoutePath(req);
   const query = getQuery(req);
+
+  // POST /api/intent/suggest — oportunidade personalizada para o destino em que a pessoa está interessada
+  if (req.method === 'POST' && route === '/intent/suggest') {
+    if (!checkRateLimit(req, res, 'intent:suggest', 20, 3600000)) return;
+    try {
+      const body = await parseJsonBody<{ slug?: string; localHour?: number; firstName?: string }>(req);
+      const auth = await optionalAuthenticateRequest(req);
+      const name = String(auth?.dbUser?.name || body.firstName || '').trim().split(/\s+/)[0] || '';
+      const suggestion = await buildIntentSuggestion({
+        slug: String(body.slug || ''),
+        firstName: name.includes('@') ? '' : name,
+        localHour: Number(body.localHour),
+      });
+      if (!suggestion) {
+        sendJson(res, 404, { error: 'Destino não encontrado.' });
+        return;
+      }
+      sendJson(res, 200, suggestion);
+    } catch (error) {
+      console.error('POST /api/intent/suggest error:', error);
+      sendJson(res, 500, { error: 'Erro ao montar a sugestão.' });
+    }
+    return;
+  }
+
+  // GET /api/brasil/destinos — Vitrine do Brasil (destinos reais + quantas ofertas cada um tem)
+  if (req.method === 'GET' && route === '/brasil/destinos') {
+    try {
+      const [dests, listings] = await Promise.all([
+        getAllDocs<DestDoc>('destinations'),
+        adminDb.collection('listings').where('status', '==', 'active').get(),
+      ]);
+      const counts = new Map<number, number>();
+      for (const d of listings.docs) {
+        const id = Number(d.data().destinationId);
+        counts.set(id, (counts.get(id) || 0) + 1);
+      }
+      const destinos = DESTINOS_BRASIL.map((d) => {
+        const seeded = dests.find(
+          (x) => x.slug === d.slug || String(x.name || '').toLowerCase().startsWith(d.nome.toLowerCase())
+        );
+        return { ...d, appSlug: seeded?.slug ?? null, ofertas: seeded ? counts.get(Number(seeded.id)) || 0 : 0 };
+      });
+      res.setHeader('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=3600');
+      sendJson(res, 200, { destinos });
+    } catch (error) {
+      console.error('GET /api/brasil/destinos error:', error);
+      sendJson(res, 500, { error: 'Erro ao carregar a vitrine.' });
+    }
+    return;
+  }
 
   // GET /api/destinations
   if (req.method === 'GET' && route === '/destinations') {

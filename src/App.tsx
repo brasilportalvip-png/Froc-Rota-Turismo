@@ -12,6 +12,11 @@ import { EditorialDailySection } from './components/EditorialDailySection.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { AnimatedCounter } from './components/DesignSystem.tsx';
 import { PromoPopupEngine } from './components/PromoPopupEngine.tsx';
+import { VitrineBrasil } from './components/VitrineBrasil.tsx';
+import { VitrinePremium } from './components/VitrinePremium.tsx';
+import { IntentOpportunity } from './components/IntentOpportunity.tsx';
+import { AdvertiserCampaign } from './components/AdvertiserCampaign.tsx';
+import { firstName, greeting, trackText } from './lib/intent.ts';
 
 // Code splitting for modals & heavy dashboards
 const DestinationDetailModal = React.lazy(() =>
@@ -56,6 +61,7 @@ function FrocRotaPlatform() {
     currency,
     dbUser,
     isAnyAdmin,
+    merchant,
     language,
     requestLogin,
     notify,
@@ -93,6 +99,7 @@ function FrocRotaPlatform() {
   const [showAdmin, setShowAdmin] = useState(false);
   const [showLegal, setShowLegal] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [intentVisible, setIntentVisible] = useState(false);
 
   const hasOpenOverlay = Boolean(
     selectedDestination ||
@@ -105,6 +112,34 @@ function FrocRotaPlatform() {
       showLegal ||
       showChat
   );
+
+  // IA de intenção: o que a pessoa abre conta como interesse (guardado só no aparelho, com consentimento)
+  useEffect(() => {
+    if (selectedDestination) trackText(`${selectedDestination.name} ${selectedDestination.state}`, 'destino');
+  }, [selectedDestination]);
+  useEffect(() => {
+    if (selectedListing) trackText(`${selectedListing.title} ${selectedListing.destinationName || ''}`, 'oferta');
+  }, [selectedListing]);
+
+  const openDestinationBySlug = useCallback(
+    (slug: string) => {
+      const d = destinations.find((x) => x.slug === slug);
+      if (d) setSelectedDestination(d);
+    },
+    [destinations]
+  );
+  const openListingBySlug = useCallback(
+    (slug: string) => {
+      const l = listings.find((x) => x.slug === slug);
+      if (l) setSelectedListing(l);
+    },
+    [listings]
+  );
+  const searchFromVitrine = useCallback((term: string) => {
+    setSearchQuery(term);
+    trackText(term, 'busca');
+    setTimeout(() => document.getElementById('marketplace')?.scrollIntoView({ behavior: 'smooth' }), 50);
+  }, []);
 
   // Sync browser/Android hardware Back button (popstate) with open modal overlays
   const pushedHistoryRef = useRef(false);
@@ -186,6 +221,13 @@ function FrocRotaPlatform() {
       if (postSlug) {
         setInitialPostSlug(postSlug);
       }
+      // Links vindos das páginas de SEO (/anuncie, /destinos/...)
+      if (params.get('painel') === 'anunciante') setShowMerchantPortal(true);
+      const busca = (params.get('busca') || '').slice(0, 80);
+      if (busca) {
+        setSearchQuery(busca);
+        setTimeout(() => document.getElementById('marketplace')?.scrollIntoView({ behavior: 'smooth' }), 500);
+      }
     } catch (err: unknown) {
       setCatalogError(err instanceof Error ? err.message : 'Erro ao conectar ao banco de dados.');
     } finally {
@@ -252,6 +294,7 @@ function FrocRotaPlatform() {
 
   const handleHeroSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    if (searchQuery.trim()) trackText(searchQuery, 'busca');
     document.getElementById('marketplace')?.scrollIntoView({ behavior: 'smooth' });
   };
 
@@ -421,6 +464,11 @@ function FrocRotaPlatform() {
                 <span className="text-white/50">·</span>
                 <span className="text-[#39FF14]">{t.slogan}</span>
               </div>
+
+              <p className="text-base md:text-lg font-bold text-[#39FF14]" aria-live="polite">
+                {greeting()}
+                {firstName(dbUser?.name) ? `, ${firstName(dbUser?.name)}` : ''}! Para onde vamos?
+              </p>
 
               <h1
                 className="font-display font-extrabold leading-[1.08] tracking-tight text-[#FFFFFF]"
@@ -755,6 +803,18 @@ function FrocRotaPlatform() {
             />
           </section>
 
+          {/* VITRINE DO BRASIL — todos os destinos, cada um com página própria no Google */}
+          <VitrineBrasil onOpenDestination={openDestinationBySlug} onSearch={searchFromVitrine} />
+
+          {/* VITRINE PREMIUM — anúncios dos parceiros */}
+          {listings.length > 0 && (
+            <VitrinePremium
+              listings={listings}
+              onOpenListing={(l) => setSelectedListing(l)}
+              onAdvertise={() => setShowMerchantPortal(true)}
+            />
+          )}
+
           {/* MÓDULOS 2, 3, 4 — MARKETPLACE INTEGRADO */}
           <section id="marketplace" className="scroll-mt-24">
             <div className="flex flex-wrap items-end justify-between gap-6 mb-6">
@@ -1015,9 +1075,14 @@ function FrocRotaPlatform() {
             >
               Painel do Anunciante
             </button>
-            <a href="/sitemap.xml" target="_blank" rel="noopener noreferrer" className="hover:text-[#FF1493]">
-              Sitemap SEO
-            </a>
+            <a href="/destinos" className="hover:text-[#FF1493]">Destinos do Brasil</a>
+            <a href="/blog" className="hover:text-[#FF1493]">Blog de viagem</a>
+            <a href="/anuncie" className="hover:text-[#FF1493]">Anuncie</a>
+            <a href="/sobre" className="hover:text-[#FF1493]">Sobre</a>
+            <a href="/contato" className="hover:text-[#FF1493]">Contato</a>
+            <a href="/politica-de-privacidade" className="hover:text-[#FF1493]">Política de Privacidade</a>
+            <a href="/termos-de-uso" className="hover:text-[#FF1493]">Termos de Uso</a>
+            <a href="/sitemap.xml" className="hover:text-[#FF1493]">Sitemap</a>
             <span>© {new Date().getFullYear()} Froc Rota Turismo</span>
           </div>
         </div>
@@ -1111,8 +1176,20 @@ function FrocRotaPlatform() {
       </Suspense>
 
       {/* SMART PROMOTIONAL POP-UP ENGINE (54+ READY MODELS) */}
+      {/* Só um pop-up por vez: privacidade/oportunidade da IA têm prioridade sobre os demais */}
+      <IntentOpportunity
+        blocked={hasOpenOverlay}
+        onOpenDestination={openDestinationBySlug}
+        onOpenOffer={openListingBySlug}
+        onVisibleChange={setIntentVisible}
+      />
+      <AdvertiserCampaign
+        blocked={hasOpenOverlay || intentVisible}
+        isMerchant={dbUser?.role === 'merchant' || Boolean(merchant)}
+        onAdvertise={() => setShowMerchantPortal(true)}
+      />
       <PromoPopupEngine
-        blockedByOverlay={hasOpenOverlay}
+        blockedByOverlay={hasOpenOverlay || intentVisible}
         userAudience={dbUser?.role === 'merchant' ? 'merchants' : 'tourists'}
         onAction={handlePopupAction}
       />

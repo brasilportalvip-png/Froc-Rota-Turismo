@@ -29,6 +29,7 @@ import {
 } from '../types.ts';
 import { useApp } from '../context/AppContext.tsx';
 import { AdminTrustPanel } from './AdminTrustPanel.tsx';
+import { AdminRadarPanel } from './AdminRadarPanel.tsx';
 import { formatMoney } from '../i18n/translations.ts';
 import { FuturisticModalHeader, SecurityPinCard } from './DesignSystem.tsx';
 
@@ -192,7 +193,7 @@ export const AdminMasterPanel: React.FC<{
   };
 
   const [tab, setTab] = useState<
-    'merchants' | 'trust' | 'finance' | 'agents' | 'editorial' | 'popups' | 'concierge' | 'subadmins' | 'integrations' | 'audit'
+    'merchants' | 'trust' | 'radar' | 'finance' | 'agents' | 'editorial' | 'popups' | 'concierge' | 'subadmins' | 'integrations' | 'audit'
   >(getDefaultAllowedTab);
 
   // Forms & filters
@@ -618,6 +619,7 @@ export const AdminMasterPanel: React.FC<{
             <div className="flex flex-wrap gap-1.5 border-b border-[#111111]/15 pb-4">
               {[
                 { id: 'merchants', label: 'Parceiros', show: hasAdminPermission('merchants') },
+                { id: 'radar', label: '📡 Radar de Parceiros', show: hasAdminPermission('merchants') },
                 {
                   id: 'trust',
                   label: '🛡️ Verificações & Relatórios IA',
@@ -701,6 +703,8 @@ export const AdminMasterPanel: React.FC<{
             )}
 
             {tab === 'trust' && <AdminTrustPanel />}
+
+            {tab === 'radar' && <AdminRadarPanel />}
 
             {tab === 'finance' && finance && (
               <div className="space-y-6">
