@@ -77,6 +77,14 @@
       "destination": "/api/bookings?route=/bookings/$1"
     },
     {
+      "source": "/api/intent/(.*)",
+      "destination": "/api/catalog?route=/intent/$1"
+    },
+    {
+      "source": "/api/brasil/(.*)",
+      "destination": "/api/catalog?route=/brasil/$1"
+    },
+    {
       "source": "/api/destinations",
       "destination": "/api/catalog?route=/destinations"
     },
@@ -159,6 +167,62 @@
     {
       "source": "/api/admin/(.*)",
       "destination": "/api/admin?route=/admin/$1"
+    },
+    {
+      "source": "/sitemap.xml",
+      "destination": "/api/seo?route=sitemap"
+    },
+    {
+      "source": "/robots.txt",
+      "destination": "/api/seo?route=robots"
+    },
+    {
+      "source": "/indexnow-key.txt",
+      "destination": "/api/seo?route=indexnow-key"
+    },
+    {
+      "source": "/:file(google[a-zA-Z0-9]+\\.html)",
+      "destination": "/api/seo?route=google-verify&f=:file"
+    },
+    {
+      "source": "/destinos",
+      "destination": "/api/seo?route=destinos"
+    },
+    {
+      "source": "/destinos/:slug",
+      "destination": "/api/seo?route=destino&slug=:slug"
+    },
+    {
+      "source": "/blog",
+      "destination": "/api/seo?route=blog"
+    },
+    {
+      "source": "/blog/:slug",
+      "destination": "/api/seo?route=post&slug=:slug"
+    },
+    {
+      "source": "/ofertas/:slug",
+      "destination": "/api/seo?route=oferta&slug=:slug"
+    },
+    {
+      "source": "/anuncie",
+      "destination": "/api/seo?route=anuncie"
+    },
+    {
+      "source": "/sobre",
+      "destination": "/api/seo?route=sobre"
+    },
+    {
+      "source": "/contato",
+      "destination": "/api/seo?route=contato"
+    },
+    {
+      "source": "/politica-de-privacidade",
+      "destination": "/api/seo?route=privacidade"
+    },
+    {
+      "source": "/termos-de-uso",
+      "destination": "/api/seo?route=termos"
     },
     {
       "source": "/(.*)",

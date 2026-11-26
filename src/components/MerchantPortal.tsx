@@ -608,6 +608,11 @@ export const MerchantPortal: React.FC<MerchantPortalProps> = ({
                     <option value="gastronomy">Gastronomia, Bares &amp; Quiosques</option>
                     <option value="hospitality">Hotéis, Pousadas &amp; Chalés</option>
                     <option value="transport">Transfers &amp; Receptivo</option>
+                    <option value="rentals">Casas &amp; Apartamentos de Temporada</option>
+                    <option value="adventure">Aventura: Rafting, Voo Livre, Tirolesa</option>
+                    <option value="guides">Guias de Turismo &amp; Agências Locais</option>
+                    <option value="shopping">Lojas, Artesanato &amp; Produtos Locais</option>
+                    <option value="events">Eventos, Festas &amp; Shows</option>
                   </select>
                   <input
                     required

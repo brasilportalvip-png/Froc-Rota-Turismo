@@ -133,7 +133,12 @@ export default defineConfig(() => {
         workbox: {
           // /api nunca é página do app: sem isso o service worker devolvia a página inicial para
           // /api/health e para os retornos do Mercado Pago/Google em /api/oauth/... (o login do parceiro não concluía).
-          navigateFallbackDenylist: [/^\/api\//],
+          // Páginas de SEO vêm prontas do servidor: o app offline não pode engolir esses endereços.
+          navigateFallbackDenylist: [
+            /^\/api\//,
+            /^\/(destinos|blog|ofertas|anuncie|sobre|contato|politica-de-privacidade|termos-de-uso)(\/|$)/,
+            /^\/(sitemap\.xml|robots\.txt|indexnow-key\.txt|google[a-zA-Z0-9]+\.html)$/,
+          ],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [

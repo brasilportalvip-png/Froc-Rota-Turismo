@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import { Type } from '@google/genai';
 import { adminDb } from './firebase-admin.js';
 import { nextSeqId } from './firestore-helpers.js';
+import { DESTINOS_BRASIL } from './brasil-destinos.js';
+import { analyzeSeo, seoTitle, slugify } from './seo.js';
 import { generateResilientJson, resolveGeminiKeySlots } from './gemini-resilience.js';
 import { dispatchAgentTask } from './agents.js';
 
@@ -42,6 +44,10 @@ export interface EditorialPostDoc {
   category: string;
   destinationSlug: string | null;
   keywordsJson: string[];
+  /** Meta descrição (Yoast: 120–156 caracteres) e resumo do card. */
+  summary?: string;
+  focusKeyphrase?: string;
+  seoScore?: number;
   coverImage: string;
   imageHash: string;
   contentHash: string;
@@ -141,6 +147,10 @@ export async function createUniqueEditorialPost(params: {
   authorAgentCode?: string;
   riskTier?: 'low_auto' | 'commercial_review';
   publishDate?: string;
+  summary?: string;
+  focusKeyphrase?: string;
+  seoScore?: number;
+  slugBase?: string;
 }): Promise<EditorialPostDoc> {
   const publishDate = params.publishDate ?? new Date().toISOString().slice(0, 10);
   const { contentHash, imageHash } = await validateEditorialUniqueness({
@@ -150,7 +160,7 @@ export async function createUniqueEditorialPost(params: {
     publishDate,
   });
 
-  const slugBase = params.title
+  const slugBase = (params.slugBase || params.title)
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -169,7 +179,10 @@ export async function createUniqueEditorialPost(params: {
     postCode,
     title: params.title.slice(0, 180),
     slug,
-    body: params.body.slice(0, 4000),
+    body: params.body.slice(0, 12000),
+    summary: params.summary ?? params.body.replace(/\s+/g, ' ').slice(0, 155),
+    focusKeyphrase: params.focusKeyphrase ?? '',
+    seoScore: params.seoScore ?? 0,
     category: params.category,
     destinationSlug: params.destinationSlug ?? null,
     keywordsJson: params.keywords ?? [],
@@ -218,78 +231,140 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
   const allDests = destsSnap.docs.map((d) => d.data() as Record<string, unknown>);
   const allListings = listingsSnap.docs.map((d) => d.data() as Record<string, unknown>);
 
-  const availableAssets = OWNED_ASSET_GALLERY.filter(
-    (a) => !usedImageHashes.has(computeImageHash(a.image))
-  );
-
   const createdPosts: EditorialPostDoc[] = [];
   const hasGeminiKey = resolveGeminiKeySlots().length > 0;
 
-  for (let i = 0; i < remainingSlots && i < availableAssets.length; i++) {
-    const asset = availableAssets[i];
-    const dest =
-      allDests.find((d) => d.slug === asset.destinationSlug) ?? allDests[i % Math.max(1, allDests.length)];
-    const relatedListings = allListings.filter((l) => l.destinationId === dest?.id);
+  // Rodízio pelos destinos do Brasil: 5 por dia → todos os destinos a cada ~20 dias, com ângulo diferente a cada volta.
+  const dayIndex = Math.floor(Date.parse(`${today}T12:00:00Z`) / 86400000);
+  const ANGLES = ['passeios', 'destinos', 'praias', 'gastronomia', 'curiosidades'];
+  const recentSnap = await adminDb.collection('posts').orderBy('createdAt', 'desc').limit(60).get();
+  const recentTitles = recentSnap.docs.map((d) => String(d.data().title || ''));
 
-    let title = `${String(dest?.name ?? 'Brasil')}: guia autêntico de ${asset.category} (${today})`;
-    let body = `${String(dest?.description ?? '')} Melhor época para visitar: ${String(dest?.bestSeason ?? 'Todo o ano')}. Curiosidade local: ${String(dest?.curiosities ?? '')}`;
-    let keywords = [String(dest?.name ?? 'Brasil'), asset.category, String(dest?.region ?? 'Turismo')];
+  for (let i = 0; i < remainingSlots; i++) {
+    const slot = existingToday.length + i;
+    const destino = DESTINOS_BRASIL[(dayIndex * 5 + slot) % DESTINOS_BRASIL.length];
+    const angle = ANGLES[(slot + Math.floor(dayIndex / 20)) % ANGLES.length];
+    const seeded = allDests.find((d) => d.slug === destino.slug);
+    const relatedListings = seeded ? allListings.filter((l) => l.destinationId === seeded.id) : [];
+    const asset = OWNED_ASSET_GALLERY.find(
+      (a) => a.destinationSlug === destino.slug && !usedImageHashes.has(computeImageHash(a.image))
+    );
+    // Sem foto própria do destino, usa a arte da marca (nunca foto de terceiros).
+    const coverImage = asset?.image ?? `/og-froc-rota.jpg?d=${destino.slug}&t=${today}`;
 
-    if (hasGeminiKey && dest) {
-      try {
-        const { data: parsed } = await generateResilientJson<{
-          title: string;
-          body: string;
-          keywords: string[];
-        }>({
-          contents: JSON.stringify({
-            date: today,
-            focusCategory: asset.category,
-            destination: dest,
-            verifiedServices: relatedListings.map((l) => l.title),
-            existingTitles: existingToday
-              .map((p) => p.title)
-              .concat(createdPosts.map((p) => p.title)),
-          }),
-          config: {
-            systemInstruction:
-              'Você é um editor sênior da Froc Rota Turismo. Escreva 1 artigo jornalístico original e inédito em português do Brasil baseado APENAS nos dados fornecidos do destino real. Nunca repita títulos existentes e nunca invente nomes de hotéis ou preços.',
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                body: { type: Type.STRING },
-                keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
+    const keyphrase = `${destino.nome}`;
+    let title = `${destino.nome}: guia de ${angle} para a sua viagem`;
+    let summary = `${destino.nome} (${destino.uf}): ${destino.resumo}`;
+    let body = `${destino.nome} é um destino de ${destino.categoria} em ${destino.uf}. ${destino.resumo}\n## O que ver\n${destino.atrativos.join(', ')}.\n## Como chegar\nO aeroporto mais usado é ${destino.aeroporto}.`;
+    let keywords = [destino.nome, angle, destino.regiao, ...destino.atrativos.slice(0, 3)];
+    let focusKeyphrase = keyphrase;
+    let seoScore = 0;
+
+    if (hasGeminiKey) {
+      let feedback = '';
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const { data: parsed } = await generateResilientJson<{
+            focusKeyphrase: string;
+            title: string;
+            metaDescription: string;
+            body: string;
+            keywords: string[];
+          }>({
+            contents: JSON.stringify({
+              date: today,
+              angulo: angle,
+              destino: {
+                nome: destino.nome,
+                estado: destino.uf,
+                regiao: destino.regiao,
+                tipo: destino.categoria,
+                resumo: destino.resumo,
+                atrativos: destino.atrativos,
+                aeroporto: destino.aeroporto,
+                detalhes: seeded ? { descricao: seeded.description, melhorEpoca: seeded.bestSeason, comoChegar: seeded.howToGet } : null,
               },
-              required: ['title', 'body', 'keywords'],
+              ofertasVerificadas: relatedListings.map((l) => l.title),
+              titulosQueJaExistem: recentTitles.concat(existingToday.map((p) => p.title)).concat(createdPosts.map((p) => p.title)),
+              correcoesPedidas: feedback || undefined,
+            }),
+            config: {
+              systemInstruction: [
+                'Você é editor-chefe e especialista em SEO (padrão Yoast SEO) da Froc Rota Turismo.',
+                'Escreva 1 matéria ORIGINAL em português do Brasil sobre o destino e o ângulo pedidos, para ranquear no Google e convencer o leitor a planejar a viagem.',
+                'Regras Yoast obrigatórias:',
+                '- focusKeyphrase: 2 a 4 palavras que o turista pesquisa (ex.: "o que fazer em Paraty"). Deve conter o nome do destino.',
+                '- title: até 60 caracteres, começando pela focusKeyphrase ou contendo-a.',
+                '- metaDescription: entre 125 e 155 caracteres, com a focusKeyphrase e uma chamada para ação.',
+                '- body: 450 a 700 palavras. O PRIMEIRO parágrafo contém a focusKeyphrase. Use 3 a 5 intertítulos em linhas próprias começando com "## " (pelo menos um com a focusKeyphrase). Parágrafos curtos (até 4 frases), frases curtas, voz ativa, palavras de transição. Repita a focusKeyphrase de forma natural de 3 a 6 vezes.',
+                '- Termine com um parágrafo chamando o leitor a ver passeios, hospedagens e passagens na Froc Rota.',
+                'Verdade sempre: use só fatos do destino e conhecimento geral consolidado. NUNCA invente nomes de empresas, hotéis, preços, telefones ou estatísticas. Não repita títulos existentes.',
+              ].join('\n'),
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  focusKeyphrase: { type: Type.STRING },
+                  title: { type: Type.STRING },
+                  metaDescription: { type: Type.STRING },
+                  body: { type: Type.STRING },
+                  keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
+                },
+                required: ['focusKeyphrase', 'title', 'metaDescription', 'body', 'keywords'],
+              },
             },
-          },
-          validate: (p) => Boolean(p && p.title && p.body),
-        });
-        if (parsed.title && parsed.body) {
+            timeoutMs: 25_000,
+            validate: (p) => Boolean(p && p.title && p.body && p.focusKeyphrase),
+          });
+          const check = analyzeSeo({
+            keyphrase: parsed.focusKeyphrase,
+            title: seoTitle(parsed.title),
+            description: parsed.metaDescription,
+            slug: slugify(parsed.focusKeyphrase),
+            h1: parsed.title,
+            bodyText: parsed.body,
+            internalLinks: 3, // a página do post sempre leva links para destino, ofertas e blog
+            imagesWithoutAlt: 0,
+            subheadings: (parsed.body.match(/^##\s/gm) || []).length,
+            minWords: 300,
+          });
           title = parsed.title;
+          summary = parsed.metaDescription;
           body = parsed.body;
-          keywords = parsed.keywords ?? keywords;
+          keywords = parsed.keywords?.length ? parsed.keywords : keywords;
+          focusKeyphrase = parsed.focusKeyphrase;
+          seoScore = check.score;
+          if (check.score >= 80) break;
+          feedback = `Corrija: ${check.checks.filter((c) => !c.ok).map((c) => c.label).join('; ')}`;
+        } catch {
+          break; // mantém o texto de reserva baseado nos dados reais
         }
-      } catch {
-        // Fallback determinístico baseado estritamente nos dados reais
       }
     }
 
-    const post = await createUniqueEditorialPost({
-      title,
-      body,
-      category: asset.category,
-      destinationSlug: typeof dest?.slug === 'string' ? dest.slug : undefined,
-      keywords,
-      coverImage: asset.image,
-      language: 'pt',
-      authorAgentCode: `AGT-0${26 + i}`,
-      riskTier: asset.category === 'promocoes' ? 'commercial_review' : 'low_auto',
-      publishDate: today,
-    });
-    createdPosts.push(post);
+    try {
+      const post = await createUniqueEditorialPost({
+        title,
+        body,
+        summary,
+        focusKeyphrase,
+        seoScore,
+        slugBase: focusKeyphrase,
+        category: angle,
+        destinationSlug: destino.slug,
+        keywords,
+        coverImage,
+        language: 'pt',
+        authorAgentCode: `AGT-0${26 + (slot % 5)}`,
+        riskTier: 'low_auto',
+        publishDate: today,
+      });
+      createdPosts.push(post);
+      usedImageHashes.add(post.imageHash);
+    } catch (err) {
+      // Tema repetido ou imagem repetida: pula este e segue com os outros (antes um erro parava o jornal todo).
+      console.error('editorial slot skipped:', err instanceof Error ? err.message : err);
+    }
   }
 
   await dispatchAgentTask({

@@ -75,6 +75,36 @@ export const TravelAndConciergeSection: React.FC = () => {
   const [cStyle, setCStyle] = useState('Experiência completa (voos + pousada + passeios)');
   const [cNotes, setCNotes] = useState('');
   const [sendingConcierge, setSendingConcierge] = useState(false);
+
+  // Links das páginas de destino/blog: ?voo=REC abre a busca já com o destino; ?concierge=Paraty preenche o roteiro.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const voo = (params.get('voo') || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
+    const conc = (params.get('concierge') || '').slice(0, 80);
+    if (voo.length === 3) {
+      setDestIata(voo);
+      setTimeout(() => document.getElementById('viagens')?.scrollIntoView({ behavior: 'smooth' }), 600);
+    }
+    if (conc) {
+      setCDest(conc);
+      setTimeout(() => document.getElementById('concierge')?.scrollIntoView({ behavior: 'smooth' }), 600);
+    }
+    // Sugestões da IA (pop-up de oportunidade) preenchem a busca sem recarregar a página.
+    const onVoo = (e: Event) => {
+      const iata = String((e as CustomEvent<{ iata?: string }>).detail?.iata || '').toUpperCase().slice(0, 3);
+      if (/^[A-Z]{3}$/.test(iata)) setDestIata(iata);
+    };
+    const onConcierge = (e: Event) => {
+      const d = String((e as CustomEvent<{ destino?: string }>).detail?.destino || '').slice(0, 80);
+      if (d) setCDest(d);
+    };
+    window.addEventListener('froc-voo', onVoo);
+    window.addEventListener('froc-concierge', onConcierge);
+    return () => {
+      window.removeEventListener('froc-voo', onVoo);
+      window.removeEventListener('froc-concierge', onConcierge);
+    };
+  }, []);
   const [conciergeCode, setConciergeCode] = useState<string | null>(null);
 
   useEffect(() => {

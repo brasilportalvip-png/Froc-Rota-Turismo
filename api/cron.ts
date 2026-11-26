@@ -3,6 +3,7 @@ import { runDailyAgentRoutine } from './_lib/agent-jobs.js';
 import { runDailyFivePostsBatch } from './_lib/editorial.js';
 import { ApiRequest, ApiResponse, enforceApiSecurity, getHeader, getQuery, sendJson } from './_lib/http.js';
 import { ensureSeeded } from './_lib/seed.js';
+import { pingIndexNow } from './_lib/seo.js';
 
 /**
  * Rotinas automáticas diárias (Vercel Cron, ver vercel.json):
@@ -28,7 +29,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const job = getQuery(req).job || 'agentes';
     if (job === 'jornal') {
       const r = await runDailyFivePostsBatch();
-      sendJson(res, 200, { ok: true, job, date: r.date, created: r.created.length });
+      // Avisa o Bing (IndexNow) das matérias novas; o Google acha pelo sitemap.
+      const pinged = await pingIndexNow(['/blog', '/sitemap.xml', ...r.created.map((p) => `/blog/${p.slug}`)]);
+      sendJson(res, 200, { ok: true, job, date: r.date, created: r.created.length, indexNow: pinged });
       return;
     }
     if (job === 'agentes') {
