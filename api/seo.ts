@@ -1,4 +1,5 @@
 import { DESTINOS_BRASIL, DestinoBrasil, detectDestinos, findDestinoBrasil, UF_NOME } from './_lib/brasil-destinos.js';
+import { fotoDoDestino, type FotoReal } from './_lib/fotos.js';
 import { adminDb } from './_lib/firebase-admin.js';
 import { ApiRequest, ApiResponse, getQuery } from './_lib/http.js';
 import { ensureSeeded } from './_lib/seed.js';
@@ -276,11 +277,13 @@ ${advertiserBox()}`,
         .slice(0, 6);
       const near = DESTINOS_BRASIL.filter((x) => x.slug !== d.slug && (x.uf === d.uf || x.aeroporto === d.aeroporto)).slice(0, 6);
       const estado = UF_NOME[d.uf] || d.uf;
+      const foto = await fotoComPrazo(d.slug);
       send(
         res,
         200,
         renderPage({
           path: `/destinos/${d.slug}`,
+          image: foto?.url1280,
           title: seoTitle(`${d.nome}: o que fazer, quando ir e ofertas`),
           description: metaDescription(`${d.nome} (${d.uf}): ${d.resumo} Veja o que fazer, como chegar e ofertas.`),
           h1: `${d.nome}: o que fazer, quando ir e onde ficar`,
@@ -289,7 +292,7 @@ ${advertiserBox()}`,
             { name: 'Destinos', path: '/destinos' },
             { name: d.nome, path: `/destinos/${d.slug}` },
           ],
-          bodyHtml: `<p class="lead">${escapeHtml(d.nome)}, em ${escapeHtml(estado)} (região ${d.regiao}): ${escapeHtml(d.resumo)}</p>
+          bodyHtml: `${fotoHtml(foto, `${d.nome}, ${estado}`)}<p class="lead">${escapeHtml(d.nome)}, em ${escapeHtml(estado)} (região ${d.regiao}): ${escapeHtml(d.resumo)}</p>
 <div class="btns">${destinationButtons(seeded?.slug ?? null, d.nome, d.aeroporto)}</div>
 <h2>O que fazer em ${escapeHtml(d.nome)}</h2>
 <div class="chips">${d.atrativos.map((a) => `<span class="chip">${escapeHtml(a)}</span>`).join('')}</div>
@@ -367,11 +370,17 @@ ${postCards(items)}
       const seeded = mainDest ? seededFor(mainDest, data.destinations) : undefined;
       const { html } = textToHtml(p.body);
       const more = data.posts.filter((x) => x.slug !== p.slug).slice(0, 4);
+      const pr = p as unknown as { coverImage?: string; fotoCredito?: { author: string; license: string; pageUrl: string } | null; destinationSlug?: string | null };
+      const realCover = pr.coverImage && /^https:\/\/upload\.wikimedia\.org\//.test(pr.coverImage) && pr.fotoCredito;
+      const fotoPost: FotoReal | null = realCover
+        ? { title: '', url1280: pr.coverImage!, url500: pr.coverImage!, pageUrl: pr.fotoCredito!.pageUrl, author: pr.fotoCredito!.author, license: pr.fotoCredito!.license, width: 0, height: 0 }
+        : await fotoComPrazo(pr.destinationSlug || mainDest?.slug || '');
       send(
         res,
         200,
         renderPage({
           path: `/blog/${p.slug}`,
+          image: fotoPost?.url1280,
           title: seoTitle(p.title),
           description: metaDescription(p.summary, 'Leia a matéria completa na Froc Rota Turismo.'),
           h1: p.title,
@@ -384,7 +393,7 @@ ${postCards(items)}
           bodyHtml: `<p class="chips"><span class="chip">${escapeHtml(p.category)}</span><span class="chip">Publicado em ${escapeHtml(
             String(p.publishDate).split('-').reverse().join('/')
           )}</span></p>
-<p class="lead">${escapeHtml(p.summary)}</p>
+${fotoHtml(fotoPost, p.title)}<p class="lead">${escapeHtml(p.summary)}</p>
 <article>${html}</article>
 ${
   mainDest
@@ -404,7 +413,7 @@ ${more.length ? `<h2>Mais do blog</h2>${postCards(more)}` : ''}`,
               dateModified: p.publishDate,
               inLanguage: 'pt-BR',
               mainEntityOfPage: `${base}/blog/${p.slug}`,
-              image: `${base}/og-froc-rota.jpg`,
+              image: fotoPost?.url1280 || `${base}/og-froc-rota.jpg`,
               keywords: (p.keywordsJson || []).join(', '),
               author: { '@type': 'Organization', name: SITE_NAME, url: base },
               publisher: {
@@ -615,4 +624,20 @@ ${
     console.error('SEO page error:', error);
     send(res, 500, '<!doctype html><title>Erro</title><p>Erro temporário. Tente de novo em instantes.</p>', 'text/html; charset=utf-8');
   }
+}
+
+/** Foto real do destino sem segurar a página: se o Commons demorar, a página sai sem foto e tenta de novo na próxima visita. */
+async function fotoComPrazo(slug: string, ms = 4000): Promise<FotoReal | null> {
+  if (!slug) return null;
+  return Promise.race([
+    fotoDoDestino(slug).catch(() => null),
+    new Promise<null>((r) => setTimeout(() => r(null), ms)),
+  ]);
+}
+
+function fotoHtml(foto: FotoReal | null, alt: string): string {
+  if (!foto) return '';
+  return `<figure class="foto"><img src="${escapeHtml(foto.url1280)}" alt="${escapeHtml(alt)}" width="1280" height="720" loading="eager" decoding="async" referrerpolicy="no-referrer"><figcaption>Foto: <a href="${escapeHtml(
+    foto.pageUrl
+  )}" rel="noopener" target="_blank">${escapeHtml(foto.author)} · ${escapeHtml(foto.license)} · Wikimedia Commons</a></figcaption></figure>`;
 }

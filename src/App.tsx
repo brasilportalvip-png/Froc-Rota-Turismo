@@ -4,6 +4,8 @@ import { AppProvider, useApp } from './context/AppContext.tsx';
 import { formatMoney, TRANSLATIONS } from './i18n/translations.ts';
 import { AvailabilitySlot, Destination, Listing } from './types.ts';
 import { ResilientImage } from './components/ResilientImage.tsx';
+import { HeroCarrossel } from './components/HeroCarrossel.tsx';
+import { FotoCredito } from './components/FotoCredito.tsx';
 import { InteractiveMap } from './components/InteractiveMap.tsx';
 import { TravelAndConciergeSection } from './components/TravelAndConciergeSection.tsx';
 import { PWAInstallButton } from './components/PWAInstallButton.tsx';
@@ -432,83 +434,13 @@ function FrocRotaPlatform() {
       </header>
 
       <main id="top" className="flex-1">
-        {/* HERO SECTION — LUXURY NEON TROPICAL FUTURISM */}
-        <section className="relative h-[540px] md:h-[620px] w-full overflow-hidden bg-[#111111]">
-          <ResilientImage
-            src="/src/assets/images/hero_fernando_noronha_1795530548063.jpg"
-            alt="Baía do Sancho em Fernando de Noronha, Brasil"
-            priority
-            className="w-full h-full object-cover opacity-90"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#111111] via-[#111111]/45 to-black/25" />
-
-          {/* Subtle Neon Ambient Particles (GPU-only transform/opacity, reduced-motion safe) */}
-          <span
-            aria-hidden="true"
-            className="hidden md:block absolute top-14 right-16 w-4 h-4 rounded-full bg-[#39FF14] froc-particle froc-animate-float"
-          />
-          <span
-            aria-hidden="true"
-            className="hidden md:block absolute top-32 right-36 w-3 h-3 rounded-full bg-[#FFD700] froc-particle"
-          />
-          <span
-            aria-hidden="true"
-            className="hidden md:block absolute bottom-32 right-24 w-3.5 h-3.5 rounded-full bg-[#FF1493] froc-particle"
-          />
-
-          <div className="absolute inset-0 max-w-7xl mx-auto px-4 sm:px-6 flex flex-col justify-end pb-10 md:pb-16">
-            <div className="max-w-3xl text-[#FFFFFF] space-y-4">
-              <div className="inline-flex flex-wrap items-center gap-2 px-3 py-1 rounded-lg bg-[#111111]/85 border border-[#FFD700] text-[11px] font-bold tracking-wide text-[#FFD700]">
-                <span>🌎 FROC ROTA TURISMO 2030+</span>
-                <span className="text-white/50">·</span>
-                <span className="text-[#39FF14]">{t.slogan}</span>
-              </div>
-
-              <p className="text-base md:text-lg font-bold text-[#39FF14]" aria-live="polite">
-                {greeting()}
-                {firstName(dbUser?.name) ? `, ${firstName(dbUser?.name)}` : ''}! Para onde vamos?
-              </p>
-
-              <h1
-                className="font-display font-extrabold leading-[1.08] tracking-tight text-[#FFFFFF]"
-                style={{ fontSize: 'clamp(2.1rem, 4.3vw, 3.7rem)', textWrap: 'balance' }}
-              >
-                {t.heroTitle}
-              </h1>
-
-              <p className="text-sm md:text-base text-white/90 max-w-2xl leading-relaxed">
-                {t.heroSubtitle}
-              </p>
-
-              <form
-                onSubmit={handleHeroSearch}
-                className="pt-2 flex flex-col sm:flex-row gap-2.5 max-w-2xl"
-              >
-                <div className="flex-1 relative">
-                  <Search className="w-4 h-4 text-[#111111] absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder={t.searchPlaceholder}
-                    className="w-full min-h-[48px] pl-10 pr-4 py-3 rounded-xl bg-[#FFFFFF] text-[#111111] border-2 border-[#111111] text-sm font-medium focus:outline-none focus:border-[#39FF14]"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAiInitialPrompt('');
-                    setShowAIModal(true);
-                  }}
-                  className="min-h-[48px] inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl froc-btn-gold text-sm whitespace-nowrap shrink-0"
-                >
-                  <Compass className="w-4 h-4" />
-                  <span>✨ {t.askAiBtn}</span>
-                </button>
-              </form>
-            </div>
-          </div>
-        </section>
+        {/* TOPO: dois carrosséis de fotos reais dos pontos turísticos do Brasil */}
+        <HeroCarrossel
+          onOpenDestination={(slug) => {
+            if (destinations.some((x) => x.slug === slug)) openDestinationBySlug(slug);
+            else window.location.href = `/destinos/${slug}`;
+          }}
+        />
 
         {/* ECOSYSTEM UTILITY, PWA & PORTALS BAR */}
         <section className="border-b-2 border-[#111111] bg-[#FFFFFF]">
@@ -704,6 +636,7 @@ function FrocRotaPlatform() {
                         {dest.region} · {dest.state}
                       </div>
                     </div>
+                    <FotoCredito credito={dest.fotoCredito} className="px-5 pt-1.5" />
                     <div className="p-5 flex-1 flex flex-col justify-between gap-4">
                       <div>
                         <div className="flex items-center justify-between text-xs text-[#111111]/70">

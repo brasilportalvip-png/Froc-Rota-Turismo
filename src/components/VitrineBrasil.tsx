@@ -15,16 +15,23 @@ export interface DestinoVitrine {
   ofertas: number;
 }
 
-const CAT: Record<string, { emoji: string; label: string; bg: string }> = {
-  praia: { emoji: '🏖️', label: 'Praias', bg: 'from-[#0ea5e9] to-[#22d3ee]' },
-  ilha: { emoji: '🏝️', label: 'Ilhas', bg: 'from-[#0891b2] to-[#34d399]' },
-  cachoeira: { emoji: '💧', label: 'Cachoeiras', bg: 'from-[#0f766e] to-[#4ade80]' },
-  parque: { emoji: '🏞️', label: 'Parques', bg: 'from-[#15803d] to-[#a3e635]' },
-  historico: { emoji: '🏛️', label: 'Históricos', bg: 'from-[#92400e] to-[#f59e0b]' },
-  serra: { emoji: '⛰️', label: 'Serras', bg: 'from-[#4338ca] to-[#a78bfa]' },
-  cidade: { emoji: '🌆', label: 'Cidades', bg: 'from-[#1e293b] to-[#64748b]' },
-  ecoturismo: { emoji: '🌿', label: 'Ecoturismo', bg: 'from-[#166534] to-[#86efac]' },
+const CAT: Record<string, { label: string }> = {
+  praia: { label: 'Praias' },
+  ilha: { label: 'Ilhas' },
+  cachoeira: { label: 'Cachoeiras' },
+  parque: { label: 'Parques' },
+  historico: { label: 'Históricos' },
+  serra: { label: 'Serras' },
+  cidade: { label: 'Cidades' },
+  ecoturismo: { label: 'Ecoturismo' },
 };
+interface FotoDestino {
+  url500: string;
+  url1280: string;
+  author: string;
+  license: string;
+  pageUrl: string;
+}
 const REGIOES = ['Todas', 'Norte', 'Nordeste', 'Centro-Oeste', 'Sudeste', 'Sul'];
 
 interface Props {
@@ -39,6 +46,7 @@ export const VitrineBrasil: React.FC<Props> = ({ onOpenDestination, onSearch }) 
   const [cat, setCat] = useState('todas');
   const [q, setQ] = useState('');
   const [showAll, setShowAll] = useState(false);
+  const [fotos, setFotos] = useState<Record<string, FotoDestino | null>>({});
 
   useEffect(() => {
     fetch('/api/brasil/destinos')
@@ -68,6 +76,29 @@ export const VitrineBrasil: React.FC<Props> = ({ onOpenDestination, onSearch }) 
   }, [destinos, regiao, cat, q]);
 
   const visible = showAll || q || regiao !== 'Todas' || cat !== 'todas' ? filtered : filtered.slice(0, 12);
+
+  // Fotos reais (Wikimedia Commons) só dos cartões que estão na tela.
+  const faltando = visible.map((d) => d.slug).filter((sl) => !(sl in fotos));
+  const faltandoKey = faltando.join(',');
+  useEffect(() => {
+    if (!faltandoKey) return;
+    const pedidos = faltandoKey.split(',');
+    let vivo = true;
+    fetch(`/api/fotos/destinos?slugs=${encodeURIComponent(faltandoKey)}`)
+      .then((r) => (r.ok ? r.json() : { fotos: {} }))
+      .then((d: { fotos?: Record<string, FotoDestino | null> }) => {
+        if (!vivo) return;
+        setFotos((prev) => {
+          const next = { ...prev };
+          for (const sl of pedidos) next[sl] = d.fotos?.[sl] ?? null;
+          return next;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      vivo = false;
+    };
+  }, [faltandoKey]);
 
   if (destinos.length === 0) return null;
 
@@ -113,7 +144,7 @@ export const VitrineBrasil: React.FC<Props> = ({ onOpenDestination, onSearch }) 
           </button>
         ))}
         <span className="w-px bg-[#111111]/15 mx-1" aria-hidden="true" />
-        {[['todas', '✨ Todos'] as const, ...Object.entries(CAT).map(([k, v]) => [k, `${v.emoji} ${v.label}`] as const)].map(
+        {[['todas', 'Todos'] as const, ...Object.entries(CAT).map(([k, v]) => [k, v.label] as const)].map(
           ([k, label]) => (
             <button
               key={k}
@@ -132,7 +163,7 @@ export const VitrineBrasil: React.FC<Props> = ({ onOpenDestination, onSearch }) 
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {visible.map((d) => {
-          const c = CAT[d.categoria] ?? CAT.cidade;
+          const foto = fotos[d.slug];
           return (
             <article
               key={d.slug}
@@ -141,16 +172,37 @@ export const VitrineBrasil: React.FC<Props> = ({ onOpenDestination, onSearch }) 
               <a
                 href={`/destinos/${d.slug}`}
                 onClick={() => trackInterest(d.slug, 'vitrine')}
-                className={`relative h-28 bg-gradient-to-br ${c.bg} flex items-end p-3`}
+                className="relative block aspect-[4/3] bg-[#111111]/10 overflow-hidden"
                 aria-label={`Guia de ${d.nome}`}
               >
-                <span className="absolute top-2 right-3 text-4xl drop-shadow" aria-hidden="true">
-                  {c.emoji}
-                </span>
-                <span className="px-2 py-0.5 rounded-md bg-black/55 text-white text-[10px] font-bold uppercase tracking-wider">
+                {foto ? (
+                  <img
+                    src={foto.url500}
+                    alt={`${d.nome} (${d.uf})`}
+                    loading="lazy"
+                    decoding="async"
+                    referrerPolicy="no-referrer"
+                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  />
+                ) : foto === null ? (
+                  <span className="absolute inset-0 bg-[#111111]" />
+                ) : (
+                  <span className="absolute inset-0 animate-pulse bg-[#111111]/10" />
+                )}
+                <span className="absolute left-3 bottom-3 px-2 py-0.5 rounded-md bg-black/60 text-white text-[10px] font-bold uppercase tracking-wider">
                   {d.regiao} · {d.uf}
                 </span>
               </a>
+              {foto && (
+                <a
+                  href={foto.pageUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3.5 pt-1.5 text-[9px] text-[#111111]/55 truncate hover:underline"
+                >
+                  Foto: {foto.author} · {foto.license} · Wikimedia Commons
+                </a>
+              )}
               <div className="p-3.5 flex-1 flex flex-col gap-2">
                 <h3 className="text-base font-extrabold text-[#111111] leading-tight">
                   <a href={`/destinos/${d.slug}`} onClick={() => trackInterest(d.slug, 'vitrine')} className="hover:underline">

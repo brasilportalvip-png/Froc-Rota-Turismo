@@ -4,6 +4,7 @@ import { runDailyFivePostsBatch } from './_lib/editorial.js';
 import { ApiRequest, ApiResponse, enforceApiSecurity, getHeader, getQuery, sendJson } from './_lib/http.js';
 import { ensureSeeded } from './_lib/seed.js';
 import { pingIndexNow } from './_lib/seo.js';
+import { fotosDosDestinos, TODOS_OS_SLUGS } from './_lib/fotos.js';
 
 /**
  * Rotinas automáticas diárias (Vercel Cron, ver vercel.json):
@@ -36,7 +37,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
     if (job === 'agentes') {
       const r = await runDailyAgentRoutine();
-      sendJson(res, 200, { ok: true, job, result: r });
+      // Deixa as fotos reais dos 100 destinos prontas (cache de 30 dias), sem segurar a rotina mais de 25 s.
+      const fotos = await Promise.race([
+        fotosDosDestinos(TODOS_OS_SLUGS).then((f) => Object.values(f).filter(Boolean).length),
+        new Promise<number>((ok) => setTimeout(() => ok(-1), 25000)),
+      ]).catch(() => -1);
+      sendJson(res, 200, { ok: true, job, result: r, fotosProntas: fotos });
       return;
     }
     sendJson(res, 400, { error: 'Rotina desconhecida.' });

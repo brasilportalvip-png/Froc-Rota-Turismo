@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { definirFotoDoDestino } from './_lib/fotos.js';
 import { adminAuth, adminDb } from './_lib/firebase-admin.js';
 import { agentVerifyMerchant } from './_lib/agent-jobs.js';
 import { buildPartnerInvite } from './_lib/prospects.js';
@@ -529,6 +530,31 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } catch (error) {
       console.error('POST invite error:', error);
       sendJson(res, 500, { error: 'Erro ao gerar convite.' });
+    }
+    return;
+  }
+
+  // POST /api/admin/fotos — troca a foto real de um destino (nome do arquivo ou link do Wikimedia Commons)
+  if (req.method === 'POST' && route === '/admin/fotos') {
+    const ctx = await requireAdminContext(req, res, 'editorial');
+    if (!ctx) return;
+    try {
+      const body = await parseJsonBody<{ slug?: string; arquivo?: string }>(req);
+      const slug = String(body.slug || '').trim().slice(0, 80);
+      const arquivo = String(body.arquivo || '').trim().slice(0, 400);
+      if (!slug || !arquivo) {
+        sendJson(res, 400, { error: 'Informe o destino e o arquivo/link da foto no Wikimedia Commons.' });
+        return;
+      }
+      const foto = await definirFotoDoDestino(slug, arquivo);
+      if (!foto) {
+        sendJson(res, 404, { error: 'Não achei essa foto no Wikimedia Commons. Confira o nome do arquivo ou o link.' });
+        return;
+      }
+      sendJson(res, 200, { foto });
+    } catch (error) {
+      console.error('POST /api/admin/fotos error:', error);
+      sendJson(res, 500, { error: 'Erro ao trocar a foto.' });
     }
     return;
   }

@@ -143,6 +143,16 @@ export default defineConfig(() => {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
             {
+              // Fotos reais dos destinos (Wikimedia Commons): guardadas no aparelho para abrir rápido.
+              urlPattern: /^https:\/\/upload\.wikimedia\.org\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'fotos-destinos',
+                expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+            {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',
               options: {

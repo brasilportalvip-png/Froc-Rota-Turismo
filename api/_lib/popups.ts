@@ -1,4 +1,5 @@
 import { adminDb } from './firebase-admin.js';
+import { assetParaFotoReal } from './fotos.js';
 import { nextSeqId } from './firestore-helpers.js';
 
 export const POPUP_CATEGORIES = [
@@ -47,11 +48,12 @@ export interface PopupTemplateDoc extends SeedPopupModel {
   createdAt: string;
 }
 
-const IMG_NORONHA = '/src/assets/images/hero_fernando_noronha_1795530548063.jpg';
-const IMG_RIO = '/src/assets/images/dest_rio_coastline_1795530549216.jpg';
-const IMG_LENCOIS = '/src/assets/images/dest_lencois_maranhenses_1795530549318.jpg';
-const IMG_CHAPADA = '/src/assets/images/dest_chapada_waterfall_1795530550621.jpg';
-const IMG_PARATY = '/src/assets/images/exp_paraty_boat_1795530550508.jpg';
+// Fotos reais dos destinos (Wikimedia Commons) — nada de imagem gerada.
+const IMG_NORONHA = '/api/foto?d=fernando-de-noronha&w=1280';
+const IMG_RIO = '/api/foto?d=rio-de-janeiro&w=1280';
+const IMG_LENCOIS = '/api/foto?d=lencois-maranhenses&w=1280';
+const IMG_CHAPADA = '/api/foto?d=chapada-dos-veadeiros&w=1280';
+const IMG_PARATY = '/api/foto?d=paraty&w=1280';
 
 const VARIANTS: Array<SeedPopupModel['visualVariant']> = [
   'neon-emerald',
@@ -1159,9 +1161,12 @@ export async function listActivePopups(): Promise<PopupTemplateDoc[]> {
     .map((d) => d.data() as PopupTemplateDoc)
     .sort((a, b) => a.code.localeCompare(b.code));
 
-  return rows.filter((p) => {
-    const afterStart = !p.validFrom || p.validFrom <= today;
-    const beforeEnd = !p.validUntil || p.validUntil >= today;
-    return afterStart && beforeEnd;
-  });
+  return rows
+    .filter((p) => {
+      const afterStart = !p.validFrom || p.validFrom <= today;
+      const beforeEnd = !p.validUntil || p.validUntil >= today;
+      return afterStart && beforeEnd;
+    })
+    .map((p) => ({ ...p, imageUrl: assetParaFotoReal(p.imageUrl) }));
 }
+

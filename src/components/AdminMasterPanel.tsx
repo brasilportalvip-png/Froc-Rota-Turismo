@@ -30,6 +30,7 @@ import {
 import { useApp } from '../context/AppContext.tsx';
 import { AdminTrustPanel } from './AdminTrustPanel.tsx';
 import { AdminRadarPanel } from './AdminRadarPanel.tsx';
+import { AdminFotosPanel } from './AdminFotosPanel.tsx';
 import { formatMoney } from '../i18n/translations.ts';
 import { FuturisticModalHeader, SecurityPinCard } from './DesignSystem.tsx';
 
@@ -1085,6 +1086,7 @@ export const AdminMasterPanel: React.FC<{
 
             {tab === 'editorial' && (
               <div className="space-y-6">
+                <AdminFotosPanel />
                 <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl bg-white border border-[#111111]/15">
                   <div>
                     <h4 className="text-sm font-semibold text-[#111111] flex items-center gap-2">

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { assetParaFotoReal } from './_lib/fotos.js';
 import { adminDb } from './_lib/firebase-admin.js';
 import { agentModerateReview } from './_lib/agent-jobs.js';
 import { dispatchAgentTask } from './_lib/agents.js';
@@ -452,7 +453,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
             booking: b,
             listingTitle: l?.title || 'Experiência Froc Rota',
             listingSlug: l?.slug || '',
-            listingImage: l?.coverImage || '/src/assets/images/hero_fernando_noronha_1795530548063.jpg',
+            listingImage: assetParaFotoReal(l?.coverImage || '/src/assets/images/rio_'),
             moduleType: l?.moduleType || 'experience',
           };
         });
@@ -992,7 +993,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           subject: string;
           ownerName: string;
           lastMessageAt: string;
+          hiddenFor?: string[];
         })
+        .filter((c) => !(Array.isArray(c.hiddenFor) && c.hiddenFor.includes(user.uid)))
         .sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt)));
 
       if (q) {
@@ -1212,7 +1215,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           channel: 'admin',
           unreadByStaff: (conv.unreadByStaff || 0) + 1,
         });
-      } else if (body.askAi && !isStaff && cleanText) {
+      } else if (body.askAi && cleanText && conv.ownerUid === user.uid) {
+        // A IA responde quem é dono da conversa (cliente, parceiro ou o próprio admin testando o chat).
         // A IA recebe as últimas mensagens da conversa para responder com contexto.
         let aiText = '';
         try {
@@ -1257,7 +1261,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       }
 
       const nowIso = new Date().toISOString();
+      const statusAtual = (convSnap.data() as { status?: string }).status;
       await convRef.update({
+        ...(statusAtual === 'resolved' && !body.requestHumanHandoff ? { status: 'open' } : {}),
         lastMessageAt: nowIso,
         updatedAt: nowIso,
         lastMessagePreview: latestPreview.slice(0, 220),
@@ -1278,6 +1284,45 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } catch (error) {
       console.error('POST /api/chat/messages error:', error);
       sendJson(res, 500, { error: 'Erro ao enviar mensagem.' });
+    }
+    return;
+  }
+
+  // Encerrar / reabrir e excluir conversa (dono ou equipe)
+  const convOnlyMatch = route.match(/^\/chat\/conversations\/(\d+)$/);
+  if (convOnlyMatch && (req.method === 'PATCH' || req.method === 'DELETE')) {
+    try {
+      const convRef = adminDb.collection('conversations').doc(convOnlyMatch[1]);
+      const convSnap = await convRef.get();
+      if (!convSnap.exists) {
+        sendJson(res, 404, { error: 'Conversa não encontrada.' });
+        return;
+      }
+      const conv = convSnap.data() as { ownerUid: string; ownerUserId: number; hiddenFor?: string[]; status?: string };
+      const isOwner = conv.ownerUid === user.uid || conv.ownerUserId === user.id;
+      if (!isOwner && !isStaff) {
+        sendJson(res, 403, { error: 'Sem permissão nesta conversa.' });
+        return;
+      }
+      const nowIso = new Date().toISOString();
+      if (req.method === 'DELETE') {
+        // Some da lista de quem excluiu; o histórico continua guardado (comprovantes e atendimento).
+        const hiddenFor = Array.from(new Set([...(conv.hiddenFor || []), user.uid]));
+        await convRef.update({ hiddenFor, updatedAt: nowIso });
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+      const body = await parseJsonBody<{ action?: string }>(req);
+      const status = body.action === 'reopen' ? 'open' : body.action === 'close' ? 'resolved' : null;
+      if (!status) {
+        sendJson(res, 400, { error: 'Ação inválida.' });
+        return;
+      }
+      await convRef.update({ status, updatedAt: nowIso, ...(status === 'resolved' ? { closedAt: nowIso, closedByUid: user.uid } : {}) });
+      sendJson(res, 200, { conversation: { ...conv, status } });
+    } catch (error) {
+      console.error('PATCH/DELETE /api/chat/conversations/:id error:', error);
+      sendJson(res, 500, { error: 'Erro ao atualizar a conversa.' });
     }
     return;
   }

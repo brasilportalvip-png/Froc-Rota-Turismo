@@ -2,11 +2,14 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Bot,
+  CheckCircle2,
   MessageSquare,
   Paperclip,
   Plus,
+  RefreshCw,
   Search,
   Send,
+  Trash2,
   UserCheck,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
@@ -82,6 +85,8 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
   const [askAi, setAskAi] = useState(true);
   const [sending, setSending] = useState(false);
   const [pendingText, setPendingText] = useState('');
+  const [sendError, setSendError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const firstListLoad = useRef(true);
@@ -162,6 +167,51 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
   const openConversation = (id: number) => {
     setSelectedId(id);
     setMobileView('thread');
+    setConfirmDelete(false);
+    setSendError('');
+  };
+
+  // Conversa nova: limpa a tela; a primeira mensagem enviada abre o atendimento.
+  const startNewConversation = () => {
+    setSelectedId(null);
+    setSelectedConv(null);
+    setMessages([]);
+    setConfirmDelete(false);
+    setSendError('');
+    setMobileView('thread');
+  };
+
+  // Quem é dono da conversa recebe resposta da IA (inclusive o admin testando o próprio chat).
+  const isMine = !selectedConv || selectedConv.ownerUid === dbUser?.uid;
+  const aiOn = askAi && isMine;
+
+  const changeStatus = async (action: 'close' | 'reopen') => {
+    if (!selectedConv) return;
+    try {
+      await apiFetch(`/api/chat/conversations/${selectedConv.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action }),
+      });
+      const status = action === 'close' ? 'resolved' : 'open';
+      setSelectedConv((c) => (c ? { ...c, status } : c));
+      setConversations((list) => list.map((c) => (c.id === selectedConv.id ? { ...c, status } : c)));
+      notify(action === 'close' ? 'Conversa encerrada.' : 'Conversa reaberta.', 'success');
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Não foi possível atualizar a conversa.', 'error');
+    }
+  };
+
+  const deleteConversation = async () => {
+    if (!selectedConv) return;
+    const id = selectedConv.id;
+    try {
+      await apiFetch(`/api/chat/conversations/${id}`, { method: 'DELETE' });
+      setConversations((list) => list.filter((c) => c.id !== id));
+      startNewConversation();
+      notify('Conversa excluída da sua lista.', 'success');
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Não foi possível excluir a conversa.', 'error');
+    }
   };
 
   const createConversation = async (subject: string): Promise<ChatConversation> => {
@@ -202,6 +252,7 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
     setSending(true);
     setPendingText(text);
     setNewMsgText('');
+    setSendError('');
     try {
       // Sem conversa aberta: a primeira mensagem já cria o atendimento.
       let convId = selectedId;
@@ -216,7 +267,7 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
           body: JSON.stringify({
             text,
             attachmentUrl: attachmentUrl.trim() || undefined,
-            askAi: !requestHumanHandoff && !isAnyAdmin && askAi,
+            askAi: !requestHumanHandoff && aiOn,
             requestHumanHandoff,
           }),
         }
@@ -234,7 +285,9 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
       if (requestHumanHandoff) notify('Pronto! Um atendente vai responder nesta conversa.', 'info');
     } catch (err: unknown) {
       setNewMsgText(text);
-      notify(err instanceof Error ? err.message : 'Falha ao enviar mensagem.', 'error');
+      const msg = err instanceof Error ? err.message : 'Falha ao enviar mensagem.';
+      setSendError(msg);
+      notify(msg, 'error');
     } finally {
       setPendingText('');
       setSending(false);
@@ -397,18 +450,72 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
                     )}
                   </div>
                 </div>
-                {!isAnyAdmin && selectedConv && selectedConv.status !== 'human_assigned' && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {!isAnyAdmin && selectedConv && selectedConv.status === 'open' && (
+                    <button
+                      type="button"
+                      disabled={sending}
+                      onClick={(e) => handleSendMessage(e, true)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#111111] text-[#111111] text-xs font-semibold hover:bg-[#111111]/5 disabled:opacity-60"
+                    >
+                      <UserCheck className="w-3.5 h-3.5" />
+                      <span>Falar com atendente</span>
+                    </button>
+                  )}
+                  {selectedConv && selectedConv.status !== 'resolved' && (
+                    <button
+                      type="button"
+                      onClick={() => changeStatus('close')}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[#111111]/30 text-[#111111] text-xs font-semibold hover:bg-[#111111]/5"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Encerrar</span>
+                    </button>
+                  )}
+                  {selectedConv && selectedConv.status === 'resolved' && (
+                    <button
+                      type="button"
+                      onClick={() => changeStatus('reopen')}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[#111111]/30 text-[#111111] text-xs font-semibold hover:bg-[#111111]/5"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Reabrir</span>
+                    </button>
+                  )}
+                  {selectedConv && (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(true)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-300 text-red-700 text-xs font-semibold hover:bg-red-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Excluir</span>
+                    </button>
+                  )}
                   <button
                     type="button"
-                    disabled={sending}
-                    onClick={(e) => handleSendMessage(e, true)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#111111] text-[#111111] text-xs font-semibold hover:bg-[#111111]/5 disabled:opacity-60"
+                    onClick={startNewConversation}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#111111] text-[#39FF14] text-xs font-bold"
                   >
-                    <UserCheck className="w-3.5 h-3.5" />
-                    <span>Falar com atendente</span>
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Nova conversa</span>
                   </button>
-                )}
+                </div>
               </div>
+
+              {confirmDelete && selectedConv && (
+                <div className="px-4 py-3 bg-red-50 border-b border-red-200 flex flex-wrap items-center justify-between gap-2 text-xs text-red-800" role="alertdialog" aria-label="Confirmar exclusão">
+                  <span>Excluir esta conversa da sua lista? Essa ação não pode ser desfeita.</span>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setConfirmDelete(false)} className="px-3 py-1.5 rounded-lg border border-red-300 font-semibold">
+                      Cancelar
+                    </button>
+                    <button type="button" onClick={deleteConversation} className="px-3 py-1.5 rounded-lg bg-red-600 text-white font-bold">
+                      Sim, excluir
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-white">
                 {!selectedId && messages.length === 0 && !pendingText && (
@@ -464,6 +571,11 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
                   );
                 })}
 
+                {sendError && !pendingText && (
+                  <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800" role="alert" data-testid="chat-erro">
+                    <strong>Não foi enviada:</strong> {sendError} Sua mensagem continua no campo abaixo — toque em Enviar para tentar de novo.
+                  </div>
+                )}
                 {pendingText && (
                   <>
                     <div className="flex flex-col items-end opacity-70">
@@ -472,7 +584,7 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
                         {pendingText}
                       </div>
                     </div>
-                    {askAi && !isAnyAdmin && (
+                    {aiOn && (
                       <div className="flex items-center gap-1.5 text-xs text-[#111111]/70" data-testid="chat-typing">
                         <Bot className="w-3.5 h-3.5" />
                         <span>Assistente digitando...</span>
@@ -498,7 +610,7 @@ export const RealtimeChatDrawer: React.FC<RealtimeChatDrawerProps> = ({
                 )}
 
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#111111]/70">
-                  {!isAnyAdmin ? (
+                  {isMine ? (
                     <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
                       <input
                         type="checkbox"
