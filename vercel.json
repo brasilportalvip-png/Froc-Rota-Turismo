@@ -81,6 +81,14 @@
       "destination": "/api/catalog?route=/intent/$1"
     },
     {
+      "source": "/api/fotos/(.*)",
+      "destination": "/api/catalog?route=/fotos/$1"
+    },
+    {
+      "source": "/api/foto",
+      "destination": "/api/catalog?route=/foto"
+    },
+    {
       "source": "/api/brasil/(.*)",
       "destination": "/api/catalog?route=/brasil/$1"
     },

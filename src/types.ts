@@ -68,6 +68,7 @@ export interface Destination {
   curiosities: string;
   highlightsJson: string[];
   coverImage: string;
+  fotoCredito?: { author: string; license: string; pageUrl: string } | null;
   avgBudgetDayCents: number;
   ratingAvg: number;
   reviewCount: number;
@@ -100,6 +101,7 @@ export interface Listing {
   menuOrScheduleJson: Array<{ label: string; detail: string; price?: string }>;
   cancellationPolicy: string;
   coverImage: string;
+  fotoCredito?: { author: string; license: string; pageUrl: string } | null;
   isFeatured: boolean;
   isSponsored: boolean;
   status: 'active' | 'paused' | 'pending' | 'expired' | string;
@@ -304,6 +306,7 @@ export interface EditorialPost {
   category: string;
   destinationSlug?: string | null;
   coverImage: string;
+  fotoCredito?: { author: string; license: string; pageUrl: string } | null;
   keywordsJson: string[];
   publishDate: string;
   contentHash: string;

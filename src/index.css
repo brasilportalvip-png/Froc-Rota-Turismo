@@ -219,3 +219,23 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Carrossel do topo: cima → direita para a esquerda; baixo → esquerda para a direita. Para ao passar o mouse. */
+@keyframes froc-marquee-left {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@keyframes froc-marquee-right {
+  from { transform: translateX(-50%); }
+  to { transform: translateX(0); }
+}
+.froc-marquee-esquerda { animation: froc-marquee-left 70s linear infinite; will-change: transform; }
+.froc-marquee-direita { animation: froc-marquee-right 70s linear infinite; will-change: transform; }
+.froc-marquee:hover .froc-marquee-esquerda,
+.froc-marquee:hover .froc-marquee-direita,
+.froc-marquee:focus-within .froc-marquee-esquerda,
+.froc-marquee:focus-within .froc-marquee-direita { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .froc-marquee { overflow-x: auto; }
+  .froc-marquee-esquerda, .froc-marquee-direita { animation: none; }
+}

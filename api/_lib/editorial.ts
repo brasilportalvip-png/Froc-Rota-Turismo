@@ -3,37 +3,11 @@ import { Type } from '@google/genai';
 import { adminDb } from './firebase-admin.js';
 import { nextSeqId } from './firestore-helpers.js';
 import { DESTINOS_BRASIL } from './brasil-destinos.js';
+import { fotoDoDestino } from './fotos.js';
 import { analyzeSeo, seoTitle, slugify } from './seo.js';
 import { generateResilientJson, resolveGeminiKeySlots } from './gemini-resilience.js';
 import { dispatchAgentTask } from './agents.js';
 
-const OWNED_ASSET_GALLERY: Array<{ image: string; destinationSlug: string; category: string }> = [
-  {
-    image: '/src/assets/images/hero_fernando_noronha_1795530548063.jpg',
-    destinationSlug: 'fernando-de-noronha',
-    category: 'praias',
-  },
-  {
-    image: '/src/assets/images/dest_rio_coastline_1795530549216.jpg',
-    destinationSlug: 'rio-de-janeiro',
-    category: 'gastronomia',
-  },
-  {
-    image: '/src/assets/images/dest_lencois_maranhenses_1795530549318.jpg',
-    destinationSlug: 'lencois-maranhenses',
-    category: 'destinos',
-  },
-  {
-    image: '/src/assets/images/dest_chapada_waterfall_1795530550621.jpg',
-    destinationSlug: 'chapada-dos-veadeiros',
-    category: 'passeios',
-  },
-  {
-    image: '/src/assets/images/exp_paraty_boat_1795530550508.jpg',
-    destinationSlug: 'paraty',
-    category: 'cultura',
-  },
-];
 
 export interface EditorialPostDoc {
   id: number;
@@ -49,6 +23,7 @@ export interface EditorialPostDoc {
   focusKeyphrase?: string;
   seoScore?: number;
   coverImage: string;
+  fotoCredito?: { author: string; license: string; pageUrl: string } | null;
   imageHash: string;
   contentHash: string;
   sourceReliability: string;
@@ -143,6 +118,7 @@ export async function createUniqueEditorialPost(params: {
   destinationSlug?: string;
   keywords?: string[];
   coverImage: string;
+  fotoCredito?: { author: string; license: string; pageUrl: string } | null;
   language?: 'pt' | 'en' | 'es';
   authorAgentCode?: string;
   riskTier?: 'low_auto' | 'commercial_review';
@@ -187,10 +163,11 @@ export async function createUniqueEditorialPost(params: {
     destinationSlug: params.destinationSlug ?? null,
     keywordsJson: params.keywords ?? [],
     coverImage: params.coverImage,
+    fotoCredito: params.fotoCredito ?? null,
     imageHash,
     contentHash,
     sourceReliability: 'verified_catalog_db',
-    imageLicense: 'froc_rota_owned_asset',
+    imageLicense: params.fotoCredito ? `wikimedia_commons:${params.fotoCredito.license}` : 'froc_rota_owned_asset',
     language: params.language ?? 'pt',
     authorAgentCode: params.authorAgentCode ?? 'AGT-026',
     riskTier,
@@ -246,11 +223,11 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
     const angle = ANGLES[(slot + Math.floor(dayIndex / 20)) % ANGLES.length];
     const seeded = allDests.find((d) => d.slug === destino.slug);
     const relatedListings = seeded ? allListings.filter((l) => l.destinationId === seeded.id) : [];
-    const asset = OWNED_ASSET_GALLERY.find(
-      (a) => a.destinationSlug === destino.slug && !usedImageHashes.has(computeImageHash(a.image))
-    );
-    // Sem foto própria do destino, usa a arte da marca (nunca foto de terceiros).
-    const coverImage = asset?.image ?? `/og-froc-rota.jpg?d=${destino.slug}&t=${today}`;
+    // Toda matéria sai com FOTO REAL do destino (Wikimedia Commons, com crédito do fotógrafo).
+    // Se o Commons não responder agora, o endereço /api/foto busca a foto quando a página abrir.
+    const fotoReal = await fotoDoDestino(destino.slug).catch(() => null);
+    const coverImage = fotoReal?.url1280 ?? `/api/foto?d=${destino.slug}&w=1280`;
+    const fotoCredito = fotoReal ? { author: fotoReal.author, license: fotoReal.license, pageUrl: fotoReal.pageUrl } : null;
 
     const keyphrase = `${destino.nome}`;
     let title = `${destino.nome}: guia de ${angle} para a sua viagem`;
@@ -352,6 +329,7 @@ export async function runDailyFivePostsBatch(targetDate?: string) {
         slugBase: focusKeyphrase,
         category: angle,
         destinationSlug: destino.slug,
+        fotoCredito,
         keywords,
         coverImage,
         language: 'pt',

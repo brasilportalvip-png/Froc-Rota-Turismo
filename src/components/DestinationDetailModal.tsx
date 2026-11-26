@@ -4,6 +4,7 @@ import { Destination, Listing, ReviewItem } from '../types.ts';
 import { useApp } from '../context/AppContext.tsx';
 import { formatMoney } from '../i18n/translations.ts';
 import { ResilientImage } from './ResilientImage.tsx';
+import { FotoCredito } from './FotoCredito.tsx';
 import { FuturisticModalHeader } from './DesignSystem.tsx';
 
 interface DestinationDetailModalProps {
@@ -104,6 +105,12 @@ export const DestinationDetailModal: React.FC<DestinationDetailModalProps> = ({
             alt={`${destination.name}, ${destination.state}`}
             className="w-full h-full object-cover"
           />
+          {destination.fotoCredito && (
+            <FotoCredito
+              credito={destination.fotoCredito}
+              className="absolute top-2 right-3 max-w-[70%] !text-white/80 drop-shadow"
+            />
+          )}
           <div className="absolute inset-0 bg-gradient-to-t from-[#111111]/85 via-black/25 to-transparent" />
           <div className="absolute bottom-5 left-6 right-6 flex flex-wrap items-center justify-between gap-3 text-white">
             <div className="flex items-center gap-2">

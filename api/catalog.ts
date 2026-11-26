@@ -1,4 +1,5 @@
-import { DESTINOS_BRASIL } from './_lib/brasil-destinos.js';
+import { DESTINOS_BRASIL, detectDestinos } from './_lib/brasil-destinos.js';
+import { fotoDoDestino, fotosDoCarrossel, fotosDosDestinos, TODOS_OS_SLUGS, trocarPorFotosReais } from './_lib/fotos.js';
 import { adminDb } from './_lib/firebase-admin.js';
 import { buildIntentSuggestion } from './_lib/intent.js';
 import { askFrocRotaAI } from './_lib/ai.js';
@@ -176,7 +177,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         return Number(b.ratingAvg || 0) - Number(a.ratingAvg || 0);
       });
 
-      sendJson(res, 200, { destinations: rows });
+      sendJson(res, 200, { destinations: await trocarPorFotosReais(rows, (d) => String(d.slug || '')) });
     } catch (error) {
       console.error('GET /api/destinations error:', error);
       sendJson(res, 500, { error: 'Erro ao carregar destinos.' });
@@ -234,7 +235,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           authorName: userMap.get(r.userId) || 'Turista Froc Rota',
         }));
 
-      sendJson(res, 200, { destination, listings: destListings, reviews: destReviews });
+      const [destComFoto] = await trocarPorFotosReais([destination], (d) => String(d.slug || ''));
+      const listingsComFoto = await trocarPorFotosReais(destListings, () => String(destination.slug || ''));
+      sendJson(res, 200, { destination: destComFoto, listings: listingsComFoto, reviews: destReviews });
     } catch (error) {
       console.error('GET /api/destinations/:slug error:', error);
       sendJson(res, 500, { error: 'Erro ao carregar detalhes do destino.' });
@@ -311,7 +314,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           };
         });
 
-      sendJson(res, 200, { listings: items });
+      sendJson(res, 200, { listings: await trocarPorFotosReais(items, (l) => (l.destinationSlug ? String(l.destinationSlug) : null)) });
     } catch (error) {
       console.error('GET /api/listings error:', error);
       sendJson(res, 500, { error: 'Erro ao consultar catálogo.' });
@@ -389,6 +392,51 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return;
   }
 
+  // FOTOS REAIS (Wikimedia Commons) — carrossel do topo, vitrine e redirecionamento para <img>
+  if (req.method === 'GET' && route === '/fotos/carrossel') {
+    try {
+      const fotos = await fotosDoCarrossel();
+      res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=604800');
+      sendJson(res, 200, fotos);
+    } catch (error) {
+      console.error('GET /api/fotos/carrossel error:', error);
+      sendJson(res, 500, { error: 'Erro ao carregar as fotos.' });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && route === '/fotos/destinos') {
+    try {
+      const pedidos = String(query.slugs || '')
+        .split(',')
+        .map((x) => x.trim())
+        .filter((x) => TODOS_OS_SLUGS.includes(x))
+        .slice(0, 100);
+      const fotos = await fotosDosDestinos(pedidos.length ? pedidos : TODOS_OS_SLUGS);
+      res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=604800');
+      sendJson(res, 200, { fotos });
+    } catch (error) {
+      console.error('GET /api/fotos/destinos error:', error);
+      sendJson(res, 500, { error: 'Erro ao carregar as fotos.' });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && route === '/foto') {
+    const slug = String(query.d || '').slice(0, 80);
+    const w = String(query.w || '1280');
+    const foto = slug ? await fotoDoDestino(slug).catch(() => null) : null;
+    res.statusCode = foto ? 302 : 404;
+    if (foto) {
+      res.setHeader('Location', w === '500' ? foto.url500 : foto.url1280);
+      res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=604800');
+      res.end();
+    } else {
+      sendJson(res, 404, { error: 'Foto não encontrada.' });
+    }
+    return;
+  }
+
   // GET /api/posts
   if (req.method === 'GET' && route === '/posts') {
     try {
@@ -400,7 +448,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           .where('status', '==', 'published')
           .limit(1)
           .get();
-        sendJson(res, 200, { post: snap.empty ? null : snap.docs[0].data() });
+        const one = snap.empty ? null : (snap.docs[0].data() as PostDoc);
+        sendJson(res, 200, { post: one ? (await trocarPorFotosReais([one], slugDoPost))[0] : null });
         return;
       }
 
@@ -409,7 +458,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         .map((d) => d.data() as PostDoc)
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
         .slice(0, 25);
-      sendJson(res, 200, { posts });
+      sendJson(res, 200, { posts: await trocarPorFotosReais(posts, slugDoPost) });
     } catch (error) {
       console.error('GET /api/posts error:', error);
       sendJson(res, 500, { error: 'Erro ao carregar publicações diárias.' });
@@ -590,3 +639,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   sendJson(res, 404, { error: 'Rota de catálogo não encontrada.' });
 }
 
+/** Destino de um post (o jornal grava; posts antigos: descobre pelo título). */
+function slugDoPost(p: Record<string, unknown>): string | null {
+  if (p.destinationSlug) return String(p.destinationSlug);
+  return detectDestinos(`${p.title || ''} ${p.summary || ''}`, 1)[0]?.destino.slug ?? null;
+}

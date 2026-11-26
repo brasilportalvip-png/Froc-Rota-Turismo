@@ -123,6 +123,7 @@ export interface PageInput {
 const CSS = `
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;background:#fafaf7;line-height:1.65}
 a{color:#0b5d1e}a:hover{color:#FF1493}
+.foto{margin:0 0 18px}.foto img{width:100%;height:auto;max-height:520px;object-fit:cover;border-radius:14px;display:block}.foto figcaption{font-size:11px;color:#666;margin-top:4px}.foto figcaption a{color:#666}
 header.top{background:#111;color:#fff;position:sticky;top:0;z-index:5}
 header.top .in{max-width:1080px;margin:0 auto;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 header.top a{color:#fff;text-decoration:none;font-weight:600;font-size:14px}
@@ -164,9 +165,10 @@ export function renderPage(p: PageInput): string {
     })),
   };
   const ld = [bcLd, ...(p.jsonLd ?? [])];
-  const verify = process.env.GOOGLE_SITE_VERIFICATION
-    ? `<meta name="google-site-verification" content="${escapeHtml(process.env.GOOGLE_SITE_VERIFICATION)}">`
-    : '';
+  // Código do Google Search Console do dono (é público por natureza: fica no <head> de todas as páginas).
+  const verify = `<meta name="google-site-verification" content="${escapeHtml(
+    process.env.GOOGLE_SITE_VERIFICATION || 'WgcZ29owPWh-IYCntXdzzCadEoHsfk7NA7rx65_NRE4'
+  )}">`;
   const bing = process.env.BING_SITE_VERIFICATION
     ? `<meta name="msvalidate.01" content="${escapeHtml(process.env.BING_SITE_VERIFICATION)}">`
     : '';

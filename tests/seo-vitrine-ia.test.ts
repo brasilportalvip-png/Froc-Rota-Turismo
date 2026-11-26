@@ -141,3 +141,29 @@ test('Confidencial: tela pública sem simulador de markup, status de integraçõ
   const out = JSON.stringify(publicFlightResult({ connected: true, provider: 'Duffel', integrations: [1], offers: [{ finalClientCents: 1000, platformFeeCents: 200, supplierBrlCents: 800, fxRate: 6, price: { total: '1', currency: 'EUR' } }] }));
   assert.equal(/platformFeeCents|supplierBrlCents|fxRate|integrations|provider|"price"/.test(out), false);
 });
+
+test('Fotos reais: carrossel 8+8 do Commons, filtro descarta mapa/pintura/foto pequena, topo sem imagem gerada', async () => {
+  const { CARROSSEL, notaFoto, precisaFotoReal, assetParaFotoReal } = await import('../api/_lib/fotos.ts');
+  assert.equal(CARROSSEL.top.length, 8);
+  assert.equal(CARROSSEL.bottom.length, 8);
+  const pg = (title: string, o: { w?: number; h?: number; cats?: string } = {}) => ({
+    title,
+    imageinfo: [{ url: 'u', width: o.w ?? 4000, height: o.h ?? 2600, mime: 'image/jpeg', extmetadata: { Categories: { value: o.cats ?? '' } } }],
+  });
+  assert.equal(notaFoto(pg('File:Mapa do Rio.jpg'), ['rio']), -1);
+  assert.equal(notaFoto(pg('File:Rio.jpg', { cats: 'Paintings of Brazil' }), ['rio']), -1);
+  assert.equal(notaFoto(pg('File:Rio.jpg', { w: 900, h: 600 }), ['rio']), -1);
+  assert.ok(notaFoto(pg('File:Rio.jpg', { cats: 'Featured pictures of Brazil' }), ['rio']) > notaFoto(pg('File:Rio.jpg'), ['rio']));
+  assert.equal(precisaFotoReal('/src/assets/images/x.jpg'), true);
+  assert.equal(precisaFotoReal('/og-froc-rota.jpg?d=rio'), true);
+  assert.equal(precisaFotoReal('https://upload.wikimedia.org/x.jpg'), false);
+  assert.match(assetParaFotoReal('/src/assets/images/dest_lencois_maranhenses_1.jpg'), /\/api\/foto\?d=lencois-maranhenses/);
+  const app = fs.readFileSync('src/App.tsx', 'utf8');
+  assert.match(app, /<HeroCarrossel/);
+  assert.equal(/hero_fernando_noronha/.test(app), false);
+  const vit = fs.readFileSync('src/components/VitrineBrasil.tsx', 'utf8');
+  assert.equal(/emoji|bg-gradient-to-br/.test(vit), false);
+  const css = fs.readFileSync('src/index.css', 'utf8');
+  assert.match(css, /froc-marquee-esquerda \{ animation: froc-marquee-left/);
+  assert.match(css, /froc-marquee-direita \{ animation: froc-marquee-right/);
+});

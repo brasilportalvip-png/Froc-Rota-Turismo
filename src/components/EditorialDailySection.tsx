@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BookOpen, Calendar, ShieldCheck } from 'lucide-react';
 import { EditorialPost } from '../types.ts';
 import { ResilientImage } from './ResilientImage.tsx';
+import { FotoCredito } from './FotoCredito.tsx';
 import { trackText } from '../lib/intent.ts';
 import { FuturisticModalHeader } from './DesignSystem.tsx';
 
@@ -93,6 +94,7 @@ export const EditorialDailySection: React.FC<EditorialDailySectionProps> = ({ in
                     {post.category}
                   </span>
                 </div>
+                <FotoCredito credito={post.fotoCredito} className="px-5 pt-1.5" />
                 <div className="p-5 space-y-2">
                   <div className="flex items-center justify-between text-[11px] text-[#111111]/65 font-semibold">
                     <span className="text-[#FF1493] font-bold">Guia Froc Rota</span>
@@ -156,6 +158,7 @@ export const EditorialDailySection: React.FC<EditorialDailySectionProps> = ({ in
                 className="w-full h-full object-cover"
               />
             </div>
+            <FotoCredito credito={selectedPost.fotoCredito} className="px-6 pt-2" />
             <div className="p-6 md:p-8 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#111111]/65">
                 <span className="font-bold text-[#FF1493]">
