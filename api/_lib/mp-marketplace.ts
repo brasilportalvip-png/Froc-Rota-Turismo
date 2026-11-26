@@ -25,7 +25,7 @@ async function loadSellerConnection(merchantId: number): Promise<SellerConnectio
     .where('provider', '==', 'mercadopago_seller')
     .get();
   const rows = snap.docs
-    .map((d) => ({ docId: d.id, ...(d.data() as Record<string, unknown>) }))
+    .map((d): Record<string, unknown> & { docId: string } => ({ ...(d.data() as Record<string, unknown>), docId: d.id }))
     .filter((r) => r.status === 'connected' && typeof r.accessToken === 'string')
     .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
   const row = rows[0];
