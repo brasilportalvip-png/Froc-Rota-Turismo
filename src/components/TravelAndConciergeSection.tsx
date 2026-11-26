@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BellRing, Moon, Plane, ShieldCheck } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
+import { CampoAeroporto } from './CampoAeroporto.tsx';
 import { formatMoney, TRANSLATIONS } from '../i18n/translations.ts';
 
 
@@ -10,7 +11,7 @@ export const TravelAndConciergeSection: React.FC = () => {
 
   // Travel search state
   const [tripType, setTripType] = useState<'one_way' | 'round_trip' | 'multi_city'>('round_trip');
-  const [originIata, setOriginIata] = useState('GRU');
+  const [originIata, setOriginIata] = useState('SAO');
   const [destIata, setDestIata] = useState('REC');
   const [departureDate, setDepartureDate] = useState(
     new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10)
@@ -21,6 +22,12 @@ export const TravelAndConciergeSection: React.FC = () => {
   const [adults, setAdults] = useState('2');
   const [maxPriceBrl, setMaxPriceBrl] = useState('2500');
   const [madrugadaOnly, setMadrugadaOnly] = useState(false);
+  // Semáforo de preços dos dias perto da data escolhida
+  const [semaforo, setSemaforo] = useState<{
+    loading: boolean;
+    dias: Array<{ date: string; minCents: number | null; cor: 'verde' | 'laranja' | 'vermelho' | null }>;
+    para: string;
+  } | null>(null);
   const [searchingFlights, setSearchingFlights] = useState(false);
   const [flightResponse, setFlightResponse] = useState<{
     connected: boolean;
@@ -88,9 +95,28 @@ export const TravelAndConciergeSection: React.FC = () => {
   }, []);
   const [conciergeCode, setConciergeCode] = useState<string | null>(null);
 
-  const handleSearchFlights = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const buscarSemaforo = async (dep: string, ret: string | undefined) => {
+    const para = `${originIata}-${destIata}-${dep}-${ret ?? ''}-${adults}`;
+    setSemaforo({ loading: true, dias: [], para: dep });
+    try {
+      const r = await apiFetch<{ available: boolean; dias: NonNullable<typeof semaforo>['dias'] }>('/api/travel/calendar', {
+        method: 'POST',
+        body: JSON.stringify({ originIata, destinationIata: destIata, departureDate: dep, returnDate: ret, adults: Number(adults) }),
+      });
+      setSemaforo(r.available && r.dias.some((d) => d.cor) ? { loading: false, dias: r.dias, para: dep } : null);
+    } catch {
+      setSemaforo(null);
+    }
+    return para;
+  };
+
+  const pesquisar = async (dep: string, ret: string | undefined) => {
+    if (originIata === destIata) {
+      notify('Origem e destino são iguais. Escolha outra cidade.', 'error');
+      return;
+    }
     setSearchingFlights(true);
+    void buscarSemaforo(dep, ret);
     try {
       const res = await apiFetch<NonNullable<typeof flightResponse>>('/api/travel/search', {
         method: 'POST',
@@ -98,8 +124,8 @@ export const TravelAndConciergeSection: React.FC = () => {
           tripType,
           originIata,
           destinationIata: destIata,
-          departureDate,
-          returnDate: tripType === 'round_trip' ? returnDate : undefined,
+          departureDate: dep,
+          returnDate: ret,
           adults: Number(adults),
           maxPriceBrl: Number(maxPriceBrl),
           madrugadaOnly,
@@ -112,6 +138,30 @@ export const TravelAndConciergeSection: React.FC = () => {
       setSearchingFlights(false);
     }
   };
+
+  const handleSearchFlights = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await pesquisar(departureDate, tripType === 'round_trip' ? returnDate : undefined);
+  };
+
+  // Tocar num dia do semáforo: pesquisa aquele dia (a volta anda junto, mantendo os dias de viagem).
+  const escolherDia = (dia: string) => {
+    let ret: string | undefined;
+    if (tripType === 'round_trip') {
+      const estadia = Math.round((Date.parse(returnDate) - Date.parse(departureDate)) / 86400000);
+      ret = new Date(Date.parse(`${dia}T12:00:00Z`) + Math.max(0, estadia) * 86400000).toISOString().slice(0, 10);
+      setReturnDate(ret);
+    }
+    setDepartureDate(dia);
+    void pesquisar(dia, ret);
+  };
+
+  const COR = {
+    verde: { bg: 'bg-[#16a34a]', soft: 'bg-[#16a34a]/10 border-[#16a34a]', txt: 'text-[#15803d]', label: 'Mais barato' },
+    laranja: { bg: 'bg-[#f59e0b]', soft: 'bg-[#f59e0b]/10 border-[#f59e0b]', txt: 'text-[#b45309]', label: 'Preço médio' },
+    vermelho: { bg: 'bg-[#dc2626]', soft: 'bg-[#dc2626]/10 border-[#dc2626]', txt: 'text-[#b91c1c]', label: 'Acima do preço' },
+  } as const;
+  const corDaData = semaforo && !semaforo.loading ? semaforo.dias.find((d) => d.date === departureDate)?.cor ?? null : null;
 
   const handleQuickFlightAlert = async () => {
     if (!dbUser) {
@@ -218,27 +268,23 @@ export const TravelAndConciergeSection: React.FC = () => {
 
           <form
             onSubmit={handleSearchFlights}
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-start"
           >
-            <div>
-              <label className="block text-xs font-bold text-[#111111] mb-1">Origem (IATA)</label>
-              <input
-                required
-                maxLength={3}
-                value={originIata}
-                onChange={(e) => setOriginIata(e.target.value.toUpperCase())}
-                className="w-full px-3 py-2.5 rounded-xl border-2 border-[#111111]/15 text-sm font-mono-tabular uppercase font-bold focus:border-[#111111] outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-[#111111] mb-1">Destino (IATA)</label>
-              <input
-                required
-                maxLength={3}
-                value={destIata}
-                onChange={(e) => setDestIata(e.target.value.toUpperCase())}
-                className="w-full px-3 py-2.5 rounded-xl border-2 border-[#111111]/15 text-sm font-mono-tabular uppercase font-bold focus:border-[#111111] outline-none"
-              />
+            <div className="sm:col-span-2 lg:col-span-6 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-2 items-end">
+              <CampoAeroporto label="Saindo de" value={originIata} onChange={setOriginIata} placeholder="De onde você sai? Ex.: São Paulo" testId="campo-origem" />
+              <button
+                type="button"
+                onClick={() => {
+                  setOriginIata(destIata);
+                  setDestIata(originIata);
+                }}
+                title="Inverter origem e destino"
+                aria-label="Inverter origem e destino"
+                className="min-h-[48px] px-3 rounded-xl border-2 border-[#111111]/15 text-lg font-bold text-[#111111] hover:border-[#111111]"
+              >
+                ⇄
+              </button>
+              <CampoAeroporto label="Indo para" value={destIata} onChange={setDestIata} placeholder="Para onde você vai? Ex.: Natal" testId="campo-destino" />
             </div>
             <div>
               <label className="block text-xs font-bold text-[#111111] mb-1">Data de ida</label>
@@ -246,9 +292,27 @@ export const TravelAndConciergeSection: React.FC = () => {
                 required
                 type="date"
                 value={departureDate}
-                onChange={(e) => setDepartureDate(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border-2 border-[#111111]/15 text-sm focus:border-[#111111] outline-none"
+                min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)}
+                onChange={(e) => {
+                  const ida = e.target.value;
+                  setDepartureDate(ida);
+                  // volta nunca antes da ida
+                  if (ida && returnDate < ida) {
+                    setReturnDate(new Date(Date.parse(`${ida}T12:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10));
+                  }
+                }}
+                className={`w-full px-3 py-2.5 rounded-xl border-2 text-sm focus:border-[#111111] outline-none ${
+                  corDaData ? COR[corDaData].soft : 'border-[#111111]/15'
+                }`}
+                data-testid="data-ida"
+                data-cor={corDaData ?? ''}
               />
+              {corDaData && (
+                <span className={`mt-1 inline-flex items-center gap-1 text-[11px] font-bold ${COR[corDaData].txt}`}>
+                  <span className={`w-2.5 h-2.5 rounded-full ${COR[corDaData].bg}`} />
+                  {COR[corDaData].label}
+                </span>
+              )}
             </div>
             {tripType === 'round_trip' && (
               <div>
@@ -256,13 +320,14 @@ export const TravelAndConciergeSection: React.FC = () => {
                 <input
                   type="date"
                   value={returnDate}
+                  min={departureDate}
                   onChange={(e) => setReturnDate(e.target.value)}
                   className="w-full px-3 py-2.5 rounded-xl border-2 border-[#111111]/15 text-sm focus:border-[#111111] outline-none"
                 />
               </div>
             )}
-            <div>
-              <label className="block text-xs font-bold text-[#111111] mb-1">Passageiros / Teto R$</label>
+            <div className="lg:col-span-2">
+              <label className="block text-xs font-bold text-[#111111] mb-1">Passageiros / Até R$</label>
               <div className="flex gap-1.5">
                 <input
                   type="number"
@@ -281,7 +346,7 @@ export const TravelAndConciergeSection: React.FC = () => {
                 />
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className={`flex gap-2 sm:mt-5 ${tripType === 'round_trip' ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
               <button
                 type="submit"
                 disabled={searchingFlights}
@@ -300,6 +365,63 @@ export const TravelAndConciergeSection: React.FC = () => {
               </button>
             </div>
           </form>
+
+          {semaforo && (
+            <div className="space-y-2" data-testid="semaforo">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-extrabold text-[#111111]">Preço por dia de ida (dias próximos)</div>
+                <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold text-[#111111]/75">
+                  {(['verde', 'laranja', 'vermelho'] as const).map((c) => (
+                    <span key={c} className="inline-flex items-center gap-1">
+                      <span className={`w-2.5 h-2.5 rounded-full ${COR[c].bg}`} />
+                      {COR[c].label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              {semaforo.loading ? (
+                <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                  {Array.from({ length: 7 }).map((_, i) => (
+                    <div key={i} className="h-[74px] rounded-xl bg-[#111111]/5 animate-pulse" />
+                  ))}
+                  <p className="col-span-full text-[11px] text-[#111111]/60">Comparando os preços dos dias próximos…</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                  {semaforo.dias.map((d) => {
+                    const dt = new Date(`${d.date}T12:00:00Z`);
+                    const sel = d.date === departureDate;
+                    return (
+                      <button
+                        key={d.date}
+                        type="button"
+                        disabled={!d.minCents || searchingFlights}
+                        onClick={() => escolherDia(d.date)}
+                        data-cor={d.cor ?? ''}
+                        className={`relative rounded-xl border-2 px-2 py-2 text-left transition-transform disabled:opacity-50 ${
+                          d.cor ? COR[d.cor].soft : 'border-[#111111]/15 bg-white'
+                        } ${sel ? 'ring-2 ring-[#111111] ring-offset-1 scale-[1.03]' : 'hover:-translate-y-0.5'}`}
+                      >
+                        {d.cor && <span className={`absolute top-2 right-2 w-2.5 h-2.5 rounded-full ${COR[d.cor].bg}`} />}
+                        <span className="block text-[10px] font-bold uppercase text-[#111111]/60">
+                          {dt.toLocaleDateString('pt-BR', { weekday: 'short', timeZone: 'UTC' }).replace('.', '')}
+                        </span>
+                        <span className="block text-sm font-extrabold text-[#111111]">
+                          {dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' })}
+                        </span>
+                        <span className={`block text-[11px] font-bold ${d.cor ? COR[d.cor].txt : 'text-[#111111]/50'}`}>
+                          {d.minCents ? formatMoney(d.minCents, 'BRL') : 'sem voo'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <p className="text-[10px] text-[#111111]/55">
+                Cores comparam o menor preço de cada dia com os dias vizinhos (valor total para {adults} passageiro{Number(adults) > 1 ? 's' : ''}{tripType === 'round_trip' ? ', ida e volta com a mesma duração' : ''}). Toque num dia para ver os voos dele.
+              </p>
+            </div>
+          )}
 
           {flightResponse && (
             <div className="p-4 rounded-xl bg-white border-2 border-[#111111]/15 text-xs space-y-2">
