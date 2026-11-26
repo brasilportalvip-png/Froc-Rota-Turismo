@@ -21,9 +21,10 @@ interface Props {
   onOpenDestination?: (slug: string) => void;
 }
 
+// Foto grande (1280 px) recortada em 500×500: fica nítida mesmo quando a original é horizontal.
 const Tile: React.FC<{ f: FotoCarrossel; onOpen?: (slug: string) => void; hidden?: boolean }> = ({ f, onOpen, hidden }) => (
   <figure
-    className="relative shrink-0 w-[280px] h-[280px] md:w-[500px] md:h-[500px] overflow-hidden rounded-2xl bg-[#111111] group"
+    className="relative shrink-0 w-[500px] h-[500px] overflow-hidden rounded-2xl bg-[#111111] group"
     aria-hidden={hidden || undefined}
   >
     <button
@@ -35,8 +36,8 @@ const Tile: React.FC<{ f: FotoCarrossel; onOpen?: (slug: string) => void; hidden
     >
       <img
         src={f.url1280}
-        srcSet={`${f.url500} 500w, ${f.url1280} 1280w`}
-        sizes="(min-width: 768px) 500px, 280px"
+        width={500}
+        height={500}
         alt={`${f.label} — ${f.local}`}
         loading="lazy"
         decoding="async"
@@ -44,12 +45,12 @@ const Tile: React.FC<{ f: FotoCarrossel; onOpen?: (slug: string) => void; hidden
         className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
       />
       <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/80 via-black/30 to-transparent pointer-events-none" />
-      <span className="absolute left-4 bottom-9 md:left-5 md:bottom-11 text-white drop-shadow">
-        <span className="block font-display text-lg md:text-2xl font-extrabold leading-tight">{f.label}</span>
-        <span className="block text-xs md:text-sm text-white/85 font-semibold">{f.local}</span>
+      <span className="absolute left-5 bottom-11 text-white drop-shadow">
+        <span className="block font-display text-2xl font-extrabold leading-tight">{f.label}</span>
+        <span className="block text-sm text-white/85 font-semibold">{f.local}</span>
       </span>
     </button>
-    <figcaption className="absolute left-4 right-4 bottom-2.5 md:left-5 md:bottom-3 text-[9px] md:text-[10px] text-white/75 truncate">
+    <figcaption className="absolute left-5 right-5 bottom-3 text-[10px] text-white/75 truncate">
       Foto:{' '}
       <a
         href={f.pageUrl}
@@ -72,7 +73,7 @@ const Faixa: React.FC<{ fotos: FotoCarrossel[]; sentido: 'esquerda' | 'direita';
 }) => (
   <div className="froc-marquee overflow-hidden" data-testid={testId}>
     <div
-      className={`flex gap-3 md:gap-4 w-max ${sentido === 'esquerda' ? 'froc-marquee-esquerda' : 'froc-marquee-direita'}`}
+      className={`flex gap-4 w-max ${sentido === 'esquerda' ? 'froc-marquee-esquerda' : 'froc-marquee-direita'}`}
     >
       {/* a lista aparece duas vezes para o giro não ter emenda */}
       {fotos.map((f) => (
@@ -104,15 +105,15 @@ export const HeroCarrossel: React.FC<Props> = ({ onOpenDestination }) => {
 
   const carregando = !dados && !erro;
   const esqueleto = (
-    <div className="flex gap-3 md:gap-4 overflow-hidden">
+    <div className="flex gap-4 overflow-hidden">
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="shrink-0 w-[280px] h-[280px] md:w-[500px] md:h-[500px] rounded-2xl bg-[#111111]/10 animate-pulse" />
+        <div key={i} className="shrink-0 w-[500px] h-[500px] rounded-2xl bg-[#111111]/10 animate-pulse" />
       ))}
     </div>
   );
 
   return (
-    <section aria-label="Pontos turísticos do Brasil" className="bg-[#FFFFFF] py-3 md:py-4 space-y-3 md:space-y-4" data-testid="hero-carrossel">
+    <section aria-label="Pontos turísticos do Brasil" className="bg-[#FFFFFF] py-4 space-y-4" data-testid="hero-carrossel">
       <h1 className="sr-only">Turismo no Brasil: passeios, pousadas e voos — Froc Rota Turismo</h1>
       {carregando ? (
         <>

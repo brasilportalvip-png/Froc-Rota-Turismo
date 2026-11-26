@@ -163,6 +163,9 @@ test('Fotos reais: carrossel 8+8 do Commons, filtro descarta mapa/pintura/foto p
   assert.equal(/hero_fernando_noronha/.test(app), false);
   const vit = fs.readFileSync('src/components/VitrineBrasil.tsx', 'utf8');
   assert.equal(/emoji|bg-gradient-to-br/.test(vit), false);
+  const hero = fs.readFileSync('src/components/HeroCarrossel.tsx', 'utf8');
+  assert.match(hero, /w-\[500px\] h-\[500px\]/);
+  assert.equal(/w-\[280px\]|md:w-/.test(hero), false, 'carrossel deve ter 500x500 em qualquer tela');
   const css = fs.readFileSync('src/index.css', 'utf8');
   assert.match(css, /froc-marquee-esquerda \{ animation: froc-marquee-left/);
   assert.match(css, /froc-marquee-direita \{ animation: froc-marquee-right/);
