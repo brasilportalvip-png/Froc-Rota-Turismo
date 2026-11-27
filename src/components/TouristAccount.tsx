@@ -226,6 +226,29 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
     }
   };
 
+  const [confirmExcluir, setConfirmExcluir] = useState('');
+  const [excluindo, setExcluindo] = useState(false);
+  const handleDeleteAccount = async () => {
+    if (confirmExcluir.trim().toUpperCase() !== 'EXCLUIR') {
+      notify('Digite EXCLUIR para confirmar.', 'error');
+      return;
+    }
+    setExcluindo(true);
+    try {
+      const r = await apiFetch<{ message?: string }>('/api/me', {
+        method: 'DELETE',
+        body: JSON.stringify({ confirm: 'EXCLUIR' }),
+      });
+      notify(r?.message || 'Sua conta foi excluída.', 'success');
+      await logout().catch(() => undefined);
+      onClose();
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : 'Não foi possível excluir a conta.', 'error');
+    } finally {
+      setExcluindo(false);
+    }
+  };
+
   const handleCancelBooking = async (bookingId: number) => {
     try {
       const r = await apiFetch<{ message?: string }>(`/api/bookings/${bookingId}/cancel`, { method: 'POST' });
@@ -759,6 +782,40 @@ export const TouristAccount: React.FC<TouristAccountProps> = ({ onClose, onOpenC
                     title="Senha da conta"
                     onSuccessMessage={(msg) => notify(msg, 'success')}
                   />
+
+                  <section
+                    aria-labelledby="excluir-conta-titulo"
+                    className="p-5 rounded-2xl border-2 border-red-600/40 bg-red-50"
+                  >
+                    <h3 id="excluir-conta-titulo" className="text-sm font-extrabold text-red-800">
+                      Excluir minha conta
+                    </h3>
+                    <p className="text-xs text-[#111111] mt-1 leading-relaxed">
+                      Apaga na hora suas fotos de identidade, CPF, favoritos, documentos de viagem, alertas e o seu login.
+                      Reservas já pagas ficam só como registro fiscal, sem seu nome ou contato (LGPD). Não dá para desfazer.
+                      Se você tiver uma reserva em andamento, cancele-a antes.
+                    </p>
+                    <label htmlFor="confirmar-exclusao" className="block text-xs font-bold text-[#111111] mt-3 mb-1">
+                      Para confirmar, digite EXCLUIR
+                    </label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        id="confirmar-exclusao"
+                        value={confirmExcluir}
+                        onChange={(e) => setConfirmExcluir(e.target.value)}
+                        autoComplete="off"
+                        className="flex-1 min-h-[44px] px-3 py-2 rounded-xl border border-red-600/40 text-sm bg-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleDeleteAccount}
+                        disabled={excluindo || confirmExcluir.trim().toUpperCase() !== 'EXCLUIR'}
+                        className="min-h-[44px] px-5 py-2.5 rounded-xl bg-red-700 text-white text-xs font-extrabold disabled:opacity-50"
+                      >
+                        {excluindo ? 'Excluindo…' : 'Excluir minha conta'}
+                      </button>
+                    </div>
+                  </section>
                 </div>
               )}
             </>

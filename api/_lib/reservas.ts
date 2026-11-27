@@ -18,7 +18,12 @@ export interface BookingDoc {
   paymentRef?: string | null;
   expiresAt?: string | null;
   checkoutUrl?: string | null;
+  checkInDate?: string;
+  createdAt?: string;
 }
+
+/** Prazo do direito de arrependimento em compras on-line (CDC, art. 49). */
+export const PRAZO_ARREPENDIMENTO_MS = 7 * 86400000;
 
 /** Data AAAA-MM-DD válida. */
 export function dataValida(v: unknown): v is string {
