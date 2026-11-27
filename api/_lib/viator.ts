@@ -202,16 +202,16 @@ export function normalizarProdutos(resp: { products?: Array<Record<string, unkno
   return saida;
 }
 
-const produtosMem = new Map<string, { at: number; itens: PasseioParceiro[] }>();
+const produtosMem = new Map<string, { at: number; itens: PasseioParceiro[] }>(); // chave = slug (ordem: destaque)
 
-/** Passeios da Viator para um destino do site (até 6, os mais bem avaliados), em reais. */
+/** Passeios da Viator para um destino do site (até 6, os mais procurados), em reais. */
 export async function passeiosViator(destino: { slug: string; name: string; lat?: number | null; lng?: number | null }): Promise<PasseioParceiro[]> {
   if (!viatorConfigurada()) return [];
   const chave = destino.slug;
   const emMem = produtosMem.get(chave);
   if (emMem && Date.now() - emMem.at < PRODUTOS_TTL_MS) return emMem.itens;
 
-  const ref = adminDb.collection('_cache').doc(`viator_p_${chave}`);
+  const ref = adminDb.collection('_cache').doc(`viator_p2_${chave}`);
   try {
     const snap = await ref.get();
     const dados = snap.exists ? (snap.data() as { at?: number; itens?: PasseioParceiro[] }) : null;
@@ -232,7 +232,8 @@ export async function passeiosViator(destino: { slug: string; name: string; lat?
         method: 'POST',
         body: {
           filtering: { destination: alvo.id },
-          sorting: { sort: 'TRAVELER_RATING', order: 'DESCENDING' },
+          // DEFAULT = ordem "em destaque" da própria Viator (mais procurados/vendidos primeiro)
+          sorting: { sort: 'DEFAULT' },
           pagination: { start: 1, count: MAX_PRODUTOS + 4 },
           currency: moeda,
         },
