@@ -25,9 +25,10 @@ export const FrocXPromo: React.FC<{ agora?: Date }> = ({ agora }) => {
 
   return (
     <section
+      id="froc-x"
       aria-labelledby="froc-x-titulo"
       data-testid="froc-x-promo"
-      className="rounded-3xl overflow-hidden border-2 border-[#111111] bg-[#0b0b0c] text-white"
+      className="scroll-mt-24 rounded-3xl overflow-hidden border-2 border-[#111111] bg-[#0b0b0c] text-white"
     >
       <div className="grid grid-cols-1 lg:grid-cols-12">
         <div className="lg:col-span-7 p-6 md:p-10 space-y-5">

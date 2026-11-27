@@ -1,4 +1,5 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { EMPRESA_SITE } from './lib/empresa.ts';
 import { Compass, MessageSquare, Search, ShieldCheck, Sparkles, Star } from 'lucide-react';
 import { AppProvider, useApp } from './context/AppContext.tsx';
 import { formatMoney, TRANSLATIONS } from './i18n/translations.ts';
@@ -12,6 +13,8 @@ import { TravelAndConciergeSection } from './components/TravelAndConciergeSectio
 import { PWAInstallButton } from './components/PWAInstallButton.tsx';
 import { OfflineIndicator } from './components/OfflineIndicator.tsx';
 import { EditorialDailySection } from './components/EditorialDailySection.tsx';
+import { BuscaSite } from './components/BuscaSite.tsx';
+import type { AcaoBusca } from './lib/buscaSite.ts';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { PromoPopupEngine } from './components/PromoPopupEngine.tsx';
 import { VitrineBrasil } from './components/VitrineBrasil.tsx';
@@ -397,6 +400,49 @@ function FrocRotaPlatform() {
     [dbUser, destinations, listings, requestLogin, notify]
   );
 
+  const irPara = (id: string) =>
+    setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+
+  const onEscolherBusca = (acao: AcaoBusca) => {
+    switch (acao.kind) {
+      case 'destino': {
+        const d = destinations.find((x) => x.id === acao.id);
+        if (d) setSelectedDestination(d);
+        return;
+      }
+      case 'oferta': {
+        const l = listings.find((x) => x.id === acao.id);
+        if (l) setSelectedListing(l);
+        return;
+      }
+      case 'materia':
+        setInitialPostSlug(acao.slug);
+        irPara('publicacoes');
+        return;
+      case 'voo':
+        window.dispatchEvent(new CustomEvent('froc-voo', { detail: { iata: acao.iata } }));
+        irPara('viagens');
+        return;
+      case 'ancora':
+        if (acao.filtro) setModuleFilter(acao.filtro);
+        irPara(acao.id);
+        return;
+      case 'link':
+        window.location.href = acao.href;
+        return;
+      case 'modal':
+        if (acao.nome === 'chat') setShowChat(true);
+        else if (acao.nome === 'ia') setShowAIModal(true);
+        else if (acao.nome === 'anunciante') setShowMerchantPortal(true);
+        else if (acao.nome === 'lgpd') setShowLegal(true);
+        else if (acao.nome === 'conta') {
+          if (dbUser) setShowAccount(true);
+          else requestLogin();
+        }
+        return;
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[#FFFFFF] text-[#111111]">
       {/* TOP BAR CONTRACT: Strictly 3 zones, single line, gap-8 */}
@@ -413,10 +459,10 @@ function FrocRotaPlatform() {
               height={40}
               className="w-10 h-10 object-contain shrink-0"
             />
-            <span>Froc Rota</span>
+            <span className="hidden min-[380px]:inline">Froc Rota</span>
           </a>
 
-          <nav className="hidden md:flex items-center gap-6 text-sm font-bold text-[#111111]/80">
+          <nav className="hidden lg:flex items-center gap-6 text-sm font-bold text-[#111111]/80">
             <a
               href="#destinos"
               onClick={() => setModuleFilter('all')}
@@ -453,7 +499,8 @@ function FrocRotaPlatform() {
             </a>
           </nav>
 
-          <div className="shrink-0">
+          <div className="shrink-0 flex items-center gap-2">
+            <BuscaSite destinos={destinations} ofertas={listings} onEscolher={onEscolherBusca} />
             {dbUser ? (
               <button
                 type="button"
@@ -1045,6 +1092,10 @@ function FrocRotaPlatform() {
             <a href="/sitemap.xml" className="hover:text-[#FF1493]">Sitemap</a>
             <span>© {new Date().getFullYear()} Froc Rota Turismo</span>
           </div>
+        </div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-8 text-[11px] text-[#111111]/70 font-semibold">
+          {EMPRESA_SITE.razaoSocial} · CNPJ {EMPRESA_SITE.cnpj} · {EMPRESA_SITE.cidade}/{EMPRESA_SITE.uf} · Agência de viagens on-line ·{' '}
+          <a href="/contato" className="underline hover:text-[#FF1493]">Atendimento e dados da empresa</a>
         </div>
       </footer>
 

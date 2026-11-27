@@ -77,6 +77,8 @@ export async function getOrCreateDbUser(decoded: DecodedIdToken): Promise<{
 
   if (existingSnap.exists) {
     const current = existingSnap.data() as DbUserDoc;
+    // Conta excluída pelo próprio usuário (LGPD): um token antigo não reabre nem regrava dados pessoais.
+    if ((current as { status?: string }).status === 'deleted') throw new Error('ACCOUNT_DELETED');
     let nextRole = current.role;
 
     if (isBootstrapAdmin && current.role !== 'admin') {

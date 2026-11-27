@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { liberarReservasVencidas } from './_lib/reservas.js';
+import { hojeBrasil, liberarReservasVencidas } from './_lib/reservas.js';
 import { assetParaFotoReal } from './_lib/fotos.js';
-import { adminDb } from './_lib/firebase-admin.js';
+import { adminAuth, adminDb } from './_lib/firebase-admin.js';
 import { agentModerateReview } from './_lib/agent-jobs.js';
 import { dispatchAgentTask } from './_lib/agents.js';
 import { askFrocRotaAI } from './_lib/ai.js';
@@ -195,6 +195,110 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } catch (error) {
       console.error('PATCH /api/me error:', error);
       sendJson(res, 500, { error: 'Falha ao atualizar perfil.' });
+    }
+    return;
+  }
+
+  // ========================
+  // EXCLUIR MINHA CONTA (LGPD, art. 18): apaga/anonimiza na hora; reservas pagas ficam só como registro fiscal, sem dados pessoais.
+  // ========================
+  if (req.method === 'DELETE' && route === '/me') {
+    if (!checkRateLimit(req, res, 'account:delete', 3, 3600000)) return;
+    try {
+      const body = await parseJsonBody<{ confirm?: string }>(req).catch(() => ({} as { confirm?: string }));
+      if (String(body.confirm || '').trim().toUpperCase() !== 'EXCLUIR') {
+        sendJson(res, 400, { error: 'Para confirmar, digite EXCLUIR.', code: 'CONFIRM_REQUIRED' });
+        return;
+      }
+      if (user.role === 'admin' || user.role === 'subadmin') {
+        sendJson(res, 409, { error: 'Contas da equipe não podem ser excluídas por aqui.', code: 'STAFF_ACCOUNT' });
+        return;
+      }
+      const merchantSnap = await adminDb.collection('merchants').where('userId', '==', user.id).limit(1).get();
+      if (!merchantSnap.empty) {
+        sendJson(res, 409, {
+          error: 'Sua conta tem cadastro de parceiro (anúncios, plano e repasses). Peça a exclusão pelo chat ou e-mail para encerrarmos o plano e os repasses com segurança.',
+          code: 'MERCHANT_ACCOUNT',
+        });
+        return;
+      }
+      const hoje = hojeBrasil();
+      const bookingsSnap = await adminDb.collection('bookings').where('userId', '==', user.id).get();
+      const futura = bookingsSnap.docs
+        .map((d) => d.data() as { status?: string; checkInDate?: string; bookingCode?: string })
+        .find((b) => ['confirmed', 'pending', 'refund_requested'].includes(String(b.status)) && String(b.checkInDate || '') >= hoje);
+      if (futura) {
+        sendJson(res, 409, {
+          error: `Você tem a reserva ${futura.bookingCode || ''} em andamento. Cancele-a ou aguarde a data da viagem antes de excluir a conta.`.replace('  ', ' '),
+          code: 'ACTIVE_BOOKING',
+        });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const apagarOnde = async (col: string, field: string, value: unknown) => {
+        const snap = await adminDb.collection(col).where(field, '==', value).get();
+        await Promise.all(snap.docs.map((d) => d.ref.delete()));
+        return snap.size;
+      };
+      // Documentos de identidade e dados de viagem pessoais
+      await Promise.all([
+        adminDb.collection('kyc_images').doc(`${user.uid}_document`).delete().catch(() => undefined),
+        adminDb.collection('kyc_images').doc(`${user.uid}_selfie`).delete().catch(() => undefined),
+      ]);
+      const check = await adminDb.collection('identity_checks').doc(user.uid).get();
+      const cpfHashAtual = check.exists ? String(check.data()?.cpfHash || '') : '';
+      if (cpfHashAtual) {
+        const idx = await adminDb.collection('cpf_index').doc(cpfHashAtual).get();
+        if (idx.exists && idx.data()?.uid === user.uid) await idx.ref.delete();
+      }
+      if (check.exists) await check.ref.delete();
+      await Promise.all([
+        apagarOnde('favorites', 'userId', user.id),
+        apagarOnde('saved_itineraries', 'userId', user.id),
+        apagarOnde('concierge_requests', 'userId', user.id),
+        apagarOnde('tourist_documents', 'numericUserId', user.id),
+        apagarOnde('flight_alerts', 'numericUserId', user.id),
+        apagarOnde('notifications', 'numericUserId', user.id),
+      ]);
+      // Reservas e compras: ficam pelo prazo legal, sem nome, contato ou observações.
+      await Promise.all(
+        bookingsSnap.docs.map((d) =>
+          d.ref.set({ guestNotes: null, guestName: null, guestEmail: null, guestPhone: null, anonymizedAt: nowIso }, { merge: true })
+        )
+      );
+      // Perfil anonimizado (o número interno fica para os registros fiscais não quebrarem).
+      await adminDb.collection('users').doc(user.uid).set(
+        {
+          name: 'Conta excluída',
+          displayName: 'Conta excluída',
+          email: `excluida-${user.id}@conta-excluida.invalid`,
+          phone: '',
+          photoURL: null,
+          status: 'deleted',
+          deletedAt: nowIso,
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      );
+      await recordAuditLog({
+        actorUserId: user.id,
+        actorEmail: null,
+        action: 'ACCOUNT_DELETED_BY_USER',
+        entityType: 'user',
+        entityId: String(user.id),
+        details: { bookingsAnonymized: bookingsSnap.size },
+      });
+      // Por último, o login: sem ele ninguém entra mais nesta conta.
+      try {
+        await adminAuth.deleteUser(user.uid);
+      } catch (err) {
+        console.error('deleteUser falhou (dados já apagados):', err);
+      }
+      sendJson(res, 200, { ok: true, message: 'Sua conta foi excluída e seus dados pessoais foram apagados.' });
+    } catch (error) {
+      console.error('DELETE /api/me error:', error);
+      sendJson(res, 500, { error: 'Não foi possível excluir a conta agora. Tente de novo ou fale com o atendimento.' });
     }
     return;
   }

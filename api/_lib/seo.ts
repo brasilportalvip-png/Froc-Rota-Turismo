@@ -1,3 +1,4 @@
+import { EMPRESA, emailContato, enderecoCompleto, numeroCadastur } from './empresa.js';
 import crypto from 'node:crypto';
 
 /**
@@ -215,7 +216,7 @@ ${p.bodyHtml}
 <footer><div class="in">
 <span>© ${new Date().getFullYear()} ${SITE_NAME}</span>
 <a href="/sobre">Sobre</a><a href="/contato">Contato</a><a href="/politica-de-privacidade">Política de Privacidade</a><a href="/termos-de-uso">Termos de Uso</a><a href="/anuncie">Anuncie</a><a href="/sitemap.xml">Sitemap</a>
-</div></footer>
+</div><div class="in" style="font-size:12px;opacity:.8">${escapeHtml(EMPRESA.razaoSocial)} · CNPJ ${escapeHtml(EMPRESA.cnpj)} · ${escapeHtml(EMPRESA.cidade)}/${escapeHtml(EMPRESA.uf)} · ${contactLine()}</div></footer>
 </body>
 </html>`;
 }
@@ -240,18 +241,29 @@ export function textToHtml(text: string): { html: string; subheadings: number } 
 
 export const LEGAL_UPDATED = '27/11/2026';
 
-/** E-mail de contato público (CONTACT_EMAIL na Vercel). Sem ele, as páginas indicam o chat do site. */
+/** E-mail oficial de contato (CONTACT_EMAIL na Vercel; sem ele, o e-mail do responsável). */
 export function contactLine(): string {
-  const e = (process.env.CONTACT_EMAIL || '').trim();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)
-    ? `<a href="mailto:${escapeHtml(e)}">${escapeHtml(e)}</a>`
-    : 'o chat em tempo real do site';
+  const e = emailContato();
+  return `<a href="mailto:${escapeHtml(e)}">${escapeHtml(e)}</a>`;
+}
+
+/** Bloco de identificação do fornecedor (Decreto 7.962/2013, art. 2º). */
+export function identificacaoHtml(): string {
+  const cad = numeroCadastur();
+  return `<div class="card"><p><strong>${escapeHtml(EMPRESA.nomeFantasia)}</strong><br>Razão social: ${escapeHtml(EMPRESA.razaoSocial)}<br>CNPJ: ${escapeHtml(
+    EMPRESA.cnpj
+  )} · ${escapeHtml(EMPRESA.natureza)}<br>Atividade: ${escapeHtml(EMPRESA.atividade)}<br>Cadastur (Ministério do Turismo): ${
+    cad ? escapeHtml(cad) : 'cadastro em análise'
+  }<br>Endereço: ${escapeHtml(enderecoCompleto())}<br>Responsável: ${escapeHtml(EMPRESA.responsavel)}<br>E-mail: ${contactLine()} · Chat em tempo real no site</p></div>`;
 }
 
 export const privacyHtml = () => `
 <p class="lead">A Froc Rota Turismo respeita sua privacidade e trata dados pessoais conforme a Lei Geral de Proteção de Dados (Lei 13.709/2018 – LGPD). Atualizada em ${LEGAL_UPDATED}.</p>
-<h2>Quem somos</h2>
-<p>A Froc Rota Turismo é uma plataforma on-line que conecta turistas a parceiros de turismo (passeios, hospedagens, restaurantes e serviços) e oferece busca de passagens e concierge. Contato do encarregado de dados: ${contactLine()}.</p>
+<h2>Quem é o controlador dos seus dados</h2>
+<p>A Froc Rota Turismo é uma plataforma on-line que conecta turistas a parceiros de turismo (passeios, hospedagens, restaurantes e serviços) e oferece busca de passagens e concierge. O controlador dos dados é:</p>
+${identificacaoHtml()}
+<h2>Encarregado pelo tratamento de dados (DPO)</h2>
+<p>${escapeHtml(EMPRESA.responsavel)}, pelo e-mail ${contactLine()}. É com o encarregado que você exerce os direitos abaixo e tira dúvidas sobre privacidade.</p>
 <h2>Quais dados coletamos</h2>
 <p>Dados de cadastro (nome, e-mail), dados de verificação de identidade (CPF, data de nascimento, foto do documento e selfie), dados de reservas e pagamentos (processados pelo Mercado Pago; não guardamos número de cartão), mensagens enviadas no chat e dados de navegação (páginas vistas e interesses), estes últimos guardados no seu próprio aparelho e usados somente com o seu consentimento.</p>
 <h2>Para que usamos</h2>
@@ -263,7 +275,9 @@ export const privacyHtml = () => `
 <h2>Segurança e retenção</h2>
 <p>O CPF é guardado de forma mascarada e com código de verificação; as fotos de identidade ficam em área restrita, acessível somente à análise antifraude. Mantemos os dados pelo tempo necessário às finalidades acima e aos prazos legais.</p>
 <h2>Seus direitos</h2>
-<p>Você pode pedir confirmação, acesso, correção, anonimização, portabilidade, eliminação de dados tratados com consentimento, informação sobre compartilhamento e revogar o consentimento a qualquer momento, pelo e-mail acima. Também pode reclamar à Autoridade Nacional de Proteção de Dados (ANPD).</p>
+<p>Você pode pedir confirmação, acesso, correção, anonimização, portabilidade, eliminação de dados tratados com consentimento, informação sobre compartilhamento e revogar o consentimento a qualquer momento, pelo e-mail do encarregado. Respondemos em até 15 dias. Também pode reclamar à Autoridade Nacional de Proteção de Dados (ANPD), em <a href="https://www.gov.br/anpd" rel="noopener" target="_blank">gov.br/anpd</a>.</p>
+<h2>Excluir sua conta</h2>
+<p>Você mesmo pode excluir sua conta em <strong>Minha Conta → Dados &amp; Segurança → Excluir minha conta</strong>. Seus dados pessoais são apagados ou anonimizados na hora; ficam guardados apenas os registros que a lei obriga a manter (por exemplo, dados fiscais de reservas pagas, pelo prazo legal), sem ligação com seu nome, e-mail ou CPF visíveis.</p>
 <h2>Cookies e personalização</h2>
 <p>Usamos armazenamento local do navegador para manter sua sessão e, se você aceitar, para lembrar os destinos que mais interessam a você e mostrar oportunidades parecidas. Também, somente se você aceitar, carregamos o código de medição da GetYourGuide, parceira de passeios, que usa cookies para registrar as visitas e reservas vindas do nosso site. Você pode recusar ou apagar a qualquer momento no aviso de privacidade do site ou limpando os dados do navegador.</p>
 `;
@@ -272,10 +286,16 @@ export const termsHtml = () => `
 <p class="lead">Estes Termos regem o uso da plataforma Froc Rota Turismo. Ao usar o site você concorda com eles. Atualizados em ${LEGAL_UPDATED}.</p>
 <h2>O que é a Froc Rota</h2>
 <p>Somos uma plataforma que aproxima turistas e parceiros de turismo. Os serviços anunciados (passeios, hospedagens, refeições e outros) são prestados pelos próprios parceiros, que respondem pela sua execução, segurança e licenças exigidas (como o Cadastur, quando obrigatório).</p>
+<h2>Quem é o fornecedor</h2>
+${identificacaoHtml()}
 <h2>Cadastro e verificação</h2>
 <p>Para reservar ou anunciar é obrigatório confirmar o e-mail e verificar a identidade com CPF verdadeiro, foto do documento e selfie. Cadastros falsos, de terceiros ou com sinais de fraude são recusados ou bloqueados.</p>
 <h2>Reservas e pagamentos</h2>
-<p>O pagamento é feito pelo Mercado Pago com divisão automática: o valor do serviço vai ao parceiro e a comissão da plataforma fica com a Froc Rota. A reserva é confirmada após a aprovação do pagamento. Cancelamentos e reembolsos seguem a política informada em cada oferta e o Código de Defesa do Consumidor, inclusive o direito de arrependimento em compras on-line quando aplicável.</p>
+<p>O pagamento é feito pelo Mercado Pago com divisão automática: o valor do serviço vai ao parceiro e a comissão da plataforma fica com a Froc Rota. Antes de pagar, você vê o preço total, o que está incluído e a política de cancelamento da oferta. A reserva é confirmada após a aprovação do pagamento; uma reserva não paga em 60 minutos é liberada.</p>
+<h2>Cancelamento e direito de arrependimento</h2>
+<p>Você pode cancelar a reserva pelo site em <strong>Minha Conta</strong>. Em compras feitas pela internet, você pode desistir em até 7 dias da compra (art. 49 do Código de Defesa do Consumidor), com devolução integral pelo mesmo meio de pagamento, desde que o serviço ainda não tenha começado. Depois disso, vale a política de cancelamento informada na oferta. O estorno é feito pelo Mercado Pago e o prazo para aparecer na fatura depende do seu banco ou cartão.</p>
+<h2>Atendimento (SAC)</h2>
+<p>Atendemos pelo chat em tempo real do site e pelo e-mail ${contactLine()}. Confirmamos o recebimento na hora e respondemos em até 5 dias úteis. Se não resolvermos, você pode registrar reclamação em <a href="https://www.consumidor.gov.br" rel="noopener" target="_blank">consumidor.gov.br</a> ou no Procon do seu estado.</p>
 <h2>Passagens aéreas</h2>
 <p>Preços e horários de passagens vêm em tempo real dos fornecedores e podem mudar até a emissão. Tarifas em moeda estrangeira são mostradas em reais pela cotação oficial do Banco Central do dia, com a taxa de serviço da Froc Rota informada antes da compra.</p>
 <h2>Passeios de parceiros afiliados</h2>
@@ -285,7 +305,7 @@ export const termsHtml = () => `
 <h2>Conteúdo e avaliações</h2>
 <p>Avaliações devem ser honestas e sobre experiências reais. Conteúdo ofensivo, falso, propaganda de terceiros ou com dados pessoais pode ser ocultado pela moderação.</p>
 <h2>Responsabilidade</h2>
-<p>A Froc Rota se responsabiliza pelo funcionamento da plataforma e pelo processamento correto dos pagamentos, na forma da lei. Problemas na prestação do serviço devem ser comunicados pelo chat do site para mediação com o parceiro.</p>
+<p>A Froc Rota se responsabiliza pelo funcionamento da plataforma e pelo processamento correto dos pagamentos, na forma da lei, sem afastar os direitos do consumidor. Problemas na prestação do serviço devem ser comunicados pelo chat do site ou por e-mail para mediação com o parceiro.</p>
 <h2>Contato e foro</h2>
 <p>Fale com a gente em ${contactLine()}. Aplica-se a lei brasileira; fica eleito o foro do domicílio do consumidor.</p>
 `;

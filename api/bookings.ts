@@ -24,7 +24,7 @@ import {
   refundMercadoPagoPayment,
 } from './_lib/payment.js';
 import { merchantBlockers, type MerchantLike } from './_lib/merchant-status.js';
-import { BookingDoc, lerVaga, liberarReservasVencidas, validarDatas } from './_lib/reservas.js';
+import { BookingDoc, PRAZO_ARREPENDIMENTO_MS, hojeBrasil, lerVaga, liberarReservasVencidas, validarDatas } from './_lib/reservas.js';
 import { recordImmutableLedgerEntry } from './_lib/pricing.js';
 import { ensureSeeded } from './_lib/seed.js';
 
@@ -71,9 +71,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         return;
       }
 
+      // Regras do cliente (a equipe financeira pode cancelar sempre):
+      // - serviço já começou: não cancela pelo site, fala com o atendimento;
+      // - até 7 dias da compra (direito de arrependimento): estorno automático e integral;
+      // - depois de 7 dias: cancelamento registrado e reembolso conforme a política da oferta (equipe analisa).
+      let foraDoArrependimento = false;
+      if (!isAdmin && booking.status === 'confirmed') {
+        if (booking.checkInDate && hojeBrasil() >= booking.checkInDate) {
+          sendJson(res, 400, {
+            error: 'O serviço já começou ou é hoje. Para cancelar, fale com o atendimento pelo chat.',
+            code: 'SERVICE_STARTED',
+          });
+          return;
+        }
+        const comprouEm = Date.parse(String(booking.createdAt || ''));
+        foraDoArrependimento = !Number.isFinite(comprouEm) || Date.now() - comprouEm > PRAZO_ARREPENDIMENTO_MS;
+      }
+
       // Reserva paga: devolve o dinheiro no Mercado Pago ANTES de marcar como reembolsada.
       let newStatus: 'cancelled' | 'refunded' | 'refund_requested' = 'cancelled';
-      if (booking.status === 'confirmed') {
+      if (booking.status === 'confirmed' && foraDoArrependimento) {
+        newStatus = 'refund_requested';
+      } else if (booking.status === 'confirmed') {
         const merchantId = booking.merchantId ?? Number((await adminDb.collection('listings').doc(String(booking.listingId)).get()).data()?.merchantId);
         const sellerToken = Number.isFinite(merchantId) ? await getSellerAccessToken(Number(merchantId)) : null;
         const devolvido =
@@ -115,9 +134,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         await dispatchAgentTask({
           department: 'Financeiro',
           triggerType: 'event',
-          eventName: 'REFUND_REQUESTED',
-          title: `Reembolso manual: ${booking.bookingCode}`,
-          input: { bookingCode: booking.bookingCode, paymentRef: booking.paymentRef ?? null },
+          eventName: foraDoArrependimento ? 'REFUND_POLICY_REVIEW' : 'REFUND_REQUESTED',
+          title: foraDoArrependimento
+            ? `Cancelamento após 7 dias: aplicar a política da oferta · ${booking.bookingCode}`
+            : `Reembolso manual: ${booking.bookingCode}`,
+          input: { bookingCode: booking.bookingCode, paymentRef: booking.paymentRef ?? null, checkInDate: booking.checkInDate ?? null, foraDoArrependimento },
         }).catch(() => undefined);
       }
 
@@ -136,6 +157,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         message:
           newStatus === 'refunded'
             ? 'Reserva cancelada e valor devolvido pelo Mercado Pago (o prazo para aparecer depende do seu banco/cartão).'
+            : newStatus === 'refund_requested' && foraDoArrependimento
+            ? 'Reserva cancelada. Como já se passaram 7 dias da compra, o reembolso segue a política da oferta e a equipe responde em até 5 dias úteis.'
             : newStatus === 'refund_requested'
             ? 'Reserva cancelada. O reembolso foi encaminhado à equipe financeira e você será avisado.'
             : 'Reserva cancelada.',

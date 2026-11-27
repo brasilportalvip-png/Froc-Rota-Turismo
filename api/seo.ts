@@ -3,10 +3,12 @@ import { fotoDoDestino, type FotoReal } from './_lib/fotos.js';
 import { adminDb } from './_lib/firebase-admin.js';
 import { ApiRequest, ApiResponse, getQuery } from './_lib/http.js';
 import { ensureSeeded } from './_lib/seed.js';
+import { EMPRESA, emailContato } from './_lib/empresa.js';
 import {
   clip,
   contactLine,
   escapeHtml,
+  identificacaoHtml,
   indexNowKey,
   metaDescription,
   privacyHtml,
@@ -566,7 +568,7 @@ ${
             'Sobre a Froc Rota Turismo: plataforma brasileira que reúne destinos, passeios, hospedagens, restaurantes, passagens e concierge com parceiros verificados e pagamento seguro.'
           ),
           h1: 'Sobre a Froc Rota Turismo',
-          body: `<p class="lead">A Froc Rota Turismo nasceu para ser a vitrine do turismo brasileiro: um só lugar para descobrir destinos, reservar com quem é verificado e viajar com segurança.</p><h2>O que fazemos</h2><p>Reunimos ${DESTINOS_BRASIL.length} destinos do Brasil, conectamos turistas a parceiros locais (passeios, hospedagens, restaurantes e serviços), buscamos passagens em tempo real e montamos roteiros sob medida pelo concierge.</p><h2>Segurança em primeiro lugar</h2><p>Todo usuário e todo anunciante passa por verificação de identidade. Pagamentos são feitos pelo Mercado Pago, com divisão automática entre parceiro e plataforma.</p><div class="btns"><a class="btn p" href="/destinos">Explorar destinos</a><a class="btn s" href="/anuncie">Anunciar</a></div>`,
+          body: `<p class="lead">A Froc Rota Turismo nasceu para ser a vitrine do turismo brasileiro: um só lugar para descobrir destinos, reservar com quem é verificado e viajar com segurança.</p><h2>O que fazemos</h2><p>Reunimos ${DESTINOS_BRASIL.length} destinos do Brasil, conectamos turistas a parceiros locais (passeios, hospedagens, restaurantes e serviços), buscamos passagens em tempo real e montamos roteiros sob medida pelo concierge.</p><h2>Segurança em primeiro lugar</h2><p>Todo usuário e todo anunciante passa por verificação de identidade. Pagamentos são feitos pelo Mercado Pago, com divisão automática entre parceiro e plataforma.</p><h2>Dados da empresa</h2>${identificacaoHtml()}<div class="btns"><a class="btn p" href="/destinos">Explorar destinos</a><a class="btn s" href="/anuncie">Anunciar</a></div>`,
         },
         contato: {
           path: '/contato',
@@ -575,7 +577,7 @@ ${
             'Fale com a Froc Rota Turismo: dúvidas sobre reservas, anúncios, pagamentos ou privacidade. Atendimento pelo chat em tempo real do site, todos os dias.'
           ),
           h1: 'Contato',
-          body: `<p class="lead">Estamos aqui para ajudar com reservas, anúncios, pagamentos e privacidade.</p><h2>Atendimento</h2><p>Fale com a gente pelo chat em tempo real do site (botão "Chat em Tempo Real") ou por ${contactLine()}.</p><h2>Para anunciantes</h2><p>Veja os planos e comece o cadastro em <a href="/anuncie">Anuncie</a>.</p>`,
+          body: `<p class="lead">Estamos aqui para ajudar com reservas, anúncios, pagamentos e privacidade.</p><h2>Atendimento</h2><p>Fale com a gente pelo chat em tempo real do site (botão "Chat em Tempo Real") ou por ${contactLine()}.</p><p>Respondemos em até 5 dias úteis. Se não resolvermos, você pode registrar reclamação em <a href="https://www.consumidor.gov.br" rel="noopener" target="_blank">consumidor.gov.br</a> ou no Procon do seu estado.</p><h2>Dados da empresa</h2>${identificacaoHtml()}<h2>Para anunciantes</h2><p>Veja os planos e comece o cadastro em <a href="/anuncie">Anuncie</a>.</p>`,
         },
         privacidade: {
           path: '/politica-de-privacidade',
@@ -611,7 +613,7 @@ ${
           bodyHtml: pages.body,
           jsonLd:
             route === 'sobre'
-              ? [{ '@context': 'https://schema.org', '@type': 'Organization', name: SITE_NAME, url: base, logo: `${base}/logo-froc-rota.png` }]
+              ? [{ '@context': 'https://schema.org', '@type': 'TravelAgency', name: SITE_NAME, legalName: EMPRESA.razaoSocial, taxID: EMPRESA.cnpj, email: emailContato(), url: base, logo: `${base}/logo-froc-rota.png`, address: { '@type': 'PostalAddress', streetAddress: EMPRESA.endereco, addressLocality: EMPRESA.cidade, addressRegion: EMPRESA.uf, postalCode: EMPRESA.cep, addressCountry: 'BR' } }]
               : [],
         }),
         'text/html; charset=utf-8',
