@@ -71,9 +71,8 @@ test('Legal: identificação da empresa igual no site e nas páginas; termos com
   assert.equal(EMPRESA_SITE.uf, EMPRESA.uf);
   const id = identificacaoHtml();
   assert.match(id, /43\.330\.322\/0001-01/);
-  assert.match(id, /Araraquara/);
   assert.match(id, /mailto:/);
-  assert.match(id, /cadastro em análise/);
+  assert.doesNotMatch(id, /Araraquara|Arid Nasser|ANA LUCIA|Atividade/, 'só CNPJ e e-mail (pedido do dono)');
   const t = termsHtml();
   assert.match(t, /art\. 49/);
   assert.match(t, /7 dias/);
