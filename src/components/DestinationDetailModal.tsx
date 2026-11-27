@@ -6,6 +6,7 @@ import { formatMoney } from '../i18n/translations.ts';
 import { ResilientImage } from './ResilientImage.tsx';
 import { FotoCredito } from './FotoCredito.tsx';
 import { FuturisticModalHeader } from './DesignSystem.tsx';
+import { PasseiosParceiros } from './PasseiosParceiros.tsx';
 
 interface DestinationDetailModalProps {
   destination: Destination;
@@ -260,6 +261,8 @@ export const DestinationDetailModal: React.FC<DestinationDetailModalProps> = ({
               </div>
             )}
           </div>
+
+          <PasseiosParceiros slug={destination.slug} cidade={destination.name} />
 
           <div className="pt-4 border-t border-[#111111]/15">
             <h3 className="text-lg font-semibold text-[#111111] mb-4">Avaliações dos visitantes</h3>

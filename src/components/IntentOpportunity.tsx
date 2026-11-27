@@ -101,7 +101,7 @@ export const IntentOpportunity: React.FC<Props> = ({ onOpenDestination, onOpenOf
       >
         <p className="text-xs text-[#111111]">
           <strong>Sugestões feitas para você.</strong> Com sua permissão, guardamos <em>neste aparelho</em> os destinos
-          que você vê e lê, para a nossa IA sugerir viagens do seu interesse. Você pode mudar quando quiser.{' '}
+          que você vê e lê, para a nossa IA sugerir viagens do seu interesse, e liberamos os cookies da GetYourGuide, parceira de passeios. Você pode mudar quando quiser.{' '}
           <a href="/politica-de-privacidade" className="underline">
             Política de Privacidade
           </a>

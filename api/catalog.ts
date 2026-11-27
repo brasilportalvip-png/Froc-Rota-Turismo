@@ -21,6 +21,7 @@ import { ensureSeeded } from './_lib/seed.js';
 import { getTravelIntegrationsStatus, precosDosDiasVizinhos, publicFlightResult, searchLiveFlightsIfConfigured } from './_lib/travel.js';
 import { semaforoPrecos } from './_lib/aeroportos.js';
 import { lanceComissaoBps, ordemDoLeilao } from './_lib/leilao.js';
+import { passeiosViator, viatorConfigurada } from './_lib/viator.js';
 
 interface DestDoc extends Record<string, unknown> {
   id: number;
@@ -436,6 +437,36 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } catch (error) {
       console.error('GET /api/fotos/destinos error:', error);
       sendJson(res, 500, { error: 'Erro ao carregar as fotos.' });
+    }
+    return;
+  }
+
+  // GET /api/passeios?d=slug — passeios de parceiros afiliados (Viator). Conteúdo NÃO indexável.
+  if (req.method === 'GET' && route === '/passeios') {
+    if (!checkRateLimit(req, res, 'catalog:passeios', 60, 60000)) return;
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    const pedido = String(query.d || '').toLowerCase();
+    const slug = /^[a-z0-9-]{2,80}$/.test(pedido) ? pedido : '';
+    if (!slug) {
+      sendJson(res, 400, { error: 'Destino inválido.' });
+      return;
+    }
+    if (!viatorConfigurada()) {
+      sendJson(res, 200, { viator: [], viatorAtiva: false });
+      return;
+    }
+    try {
+      const snap = await adminDb.collection('destinations').where('slug', '==', slug).limit(1).get();
+      if (snap.empty) {
+        sendJson(res, 404, { error: 'Destino não encontrado.' });
+        return;
+      }
+      const d = snap.docs[0].data() as DestDoc & { lat?: number; lng?: number };
+      const viator = await passeiosViator({ slug, name: d.name, lat: d.lat ?? null, lng: d.lng ?? null });
+      sendJson(res, 200, { viator, viatorAtiva: true });
+    } catch (error) {
+      console.error('GET /api/passeios error:', error instanceof Error ? error.message : error);
+      sendJson(res, 200, { viator: [], viatorAtiva: true, indisponivel: true });
     }
     return;
   }

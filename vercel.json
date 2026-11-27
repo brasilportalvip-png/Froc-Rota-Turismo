@@ -89,6 +89,10 @@
       "destination": "/api/catalog?route=/fotos/$1"
     },
     {
+      "source": "/api/passeios",
+      "destination": "/api/catalog?route=/passeios"
+    },
+    {
       "source": "/api/foto",
       "destination": "/api/catalog?route=/foto"
     },
