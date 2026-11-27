@@ -238,7 +238,7 @@ export function textToHtml(text: string): { html: string; subheadings: number } 
   return { html, subheadings };
 }
 
-export const LEGAL_UPDATED = '26/11/2026';
+export const LEGAL_UPDATED = '27/11/2026';
 
 /** E-mail de contato público (CONTACT_EMAIL na Vercel). Sem ele, as páginas indicam o chat do site. */
 export function contactLine(): string {
@@ -259,13 +259,13 @@ export const privacyHtml = () => `
 <h2>Base legal</h2>
 <p>Execução de contrato (reservas e anúncios), cumprimento de obrigação legal, legítimo interesse na prevenção a fraudes e segurança, e consentimento para personalização e comunicações de marketing.</p>
 <h2>Com quem compartilhamos</h2>
-<p>Com o parceiro responsável pela sua reserva (somente o necessário para prestar o serviço), com o Mercado Pago (pagamentos), com provedores de infraestrutura e de inteligência artificial que processam dados em nosso nome (Google Cloud/Firebase, Google Gemini, Vercel) e com autoridades quando a lei exigir. Não vendemos dados pessoais.</p>
+<p>Com o parceiro responsável pela sua reserva (somente o necessário para prestar o serviço), com o Mercado Pago (pagamentos), com provedores de infraestrutura e de inteligência artificial que processam dados em nosso nome (Google Cloud/Firebase, Google Gemini, Vercel) e com autoridades quando a lei exigir. Não vendemos dados pessoais. Quando você clica em um passeio de parceiro afiliado (Viator ou GetYourGuide), é levado ao site dele, que passa a tratar seus dados pelas regras próprias de privacidade.</p>
 <h2>Segurança e retenção</h2>
 <p>O CPF é guardado de forma mascarada e com código de verificação; as fotos de identidade ficam em área restrita, acessível somente à análise antifraude. Mantemos os dados pelo tempo necessário às finalidades acima e aos prazos legais.</p>
 <h2>Seus direitos</h2>
 <p>Você pode pedir confirmação, acesso, correção, anonimização, portabilidade, eliminação de dados tratados com consentimento, informação sobre compartilhamento e revogar o consentimento a qualquer momento, pelo e-mail acima. Também pode reclamar à Autoridade Nacional de Proteção de Dados (ANPD).</p>
 <h2>Cookies e personalização</h2>
-<p>Usamos armazenamento local do navegador para manter sua sessão e, se você aceitar, para lembrar os destinos que mais interessam a você e mostrar oportunidades parecidas. Você pode recusar ou apagar a qualquer momento no aviso de privacidade do site ou limpando os dados do navegador.</p>
+<p>Usamos armazenamento local do navegador para manter sua sessão e, se você aceitar, para lembrar os destinos que mais interessam a você e mostrar oportunidades parecidas. Também, somente se você aceitar, carregamos o código de medição da GetYourGuide, parceira de passeios, que usa cookies para registrar as visitas e reservas vindas do nosso site. Você pode recusar ou apagar a qualquer momento no aviso de privacidade do site ou limpando os dados do navegador.</p>
 `;
 
 export const termsHtml = () => `
@@ -278,6 +278,8 @@ export const termsHtml = () => `
 <p>O pagamento é feito pelo Mercado Pago com divisão automática: o valor do serviço vai ao parceiro e a comissão da plataforma fica com a Froc Rota. A reserva é confirmada após a aprovação do pagamento. Cancelamentos e reembolsos seguem a política informada em cada oferta e o Código de Defesa do Consumidor, inclusive o direito de arrependimento em compras on-line quando aplicável.</p>
 <h2>Passagens aéreas</h2>
 <p>Preços e horários de passagens vêm em tempo real dos fornecedores e podem mudar até a emissão. Tarifas em moeda estrangeira são mostradas em reais pela cotação oficial do Banco Central do dia, com a taxa de serviço da Froc Rota informada antes da compra.</p>
+<h2>Passeios de parceiros afiliados</h2>
+<p>Algumas páginas mostram passeios da Viator e da GetYourGuide. Nesses casos a reserva, o pagamento, o cancelamento e o atendimento são feitos diretamente no site do parceiro, conforme as regras dele; a Froc Rota apenas indica o passeio e pode receber comissão por isso.</p>
 <h2>Anunciantes</h2>
 <p>Anunciantes assinam um plano pago com cobrança automática mensal no cartão. O anúncio só é publicado com cadastro verificado, plano em dia e conta Mercado Pago conectada. O anunciante garante que as informações, fotos e preços são verdadeiros e que tem direito de usá-los.</p>
 <h2>Conteúdo e avaliações</h2>

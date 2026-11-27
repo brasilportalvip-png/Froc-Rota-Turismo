@@ -35,6 +35,11 @@ export function getConsent(): Consent {
 }
 export function setConsent(c: 'yes' | 'no') {
   write(CONSENT_KEY, c);
+  try {
+    window.dispatchEvent(new CustomEvent('froc-consent', { detail: c }));
+  } catch {
+    /* ambiente sem window */
+  }
   if (c === 'no') {
     try {
       localStorage.removeItem(INTEREST_KEY);
