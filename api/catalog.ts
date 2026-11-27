@@ -180,7 +180,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         if (Boolean(b.featured) !== Boolean(a.featured)) {
           return Number(Boolean(b.featured)) - Number(Boolean(a.featured));
         }
-        return Number(b.ratingAvg || 0) - Number(a.ratingAvg || 0);
+        const nota = Number(b.ratingAvg || 0) - Number(a.ratingAvg || 0);
+        if (nota) return nota;
+        return String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR');
       });
 
       sendJson(res, 200, { destinations: await trocarPorFotosReais(rows, (d) => String(d.slug || '')) });

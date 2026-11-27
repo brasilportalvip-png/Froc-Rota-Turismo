@@ -4,6 +4,8 @@ import { computeEditorialHash, computeImageHash, EditorialPostDoc } from './edit
 import { ensurePopupsSeeded } from './popups.js';
 import { nextSeqId } from './firestore-helpers.js';
 import { COMISSAO_MIN_BPS } from './leilao.js';
+import { DESTINOS_BRASIL } from './brasil-destinos.js';
+import { acharAeroporto } from './aeroportos.js';
 
 let seedPromise: Promise<void> | null = null;
 
@@ -32,6 +34,68 @@ async function runSeedAll() {
   await runBaseSeed();
   await migrateBusinessRulesV2();
   await migratePlanosLeilaoV3();
+  await migrateDestinosBrasilV1();
+}
+
+/**
+ * Os 100 destinos da Vitrine do Brasil também na lista "Destinos Procurados do Brasil" (antes só 5 tinham ficha).
+ * Só com dados verdadeiros: resumo, atrativos, região, coordenadas e o aeroporto para chegar.
+ * Orçamento médio, melhor época e curiosidades ficam vazios (a tela esconde) até termos dado real.
+ */
+export function fichaDoDestino(d: (typeof DESTINOS_BRASIL)[number], id: number, agora: string) {
+  const aero = acharAeroporto(d.aeroporto);
+  const comoChegar = aero
+    ? `Aeroporto mais usado para chegar: ${aero.nome} (${aero.codigo}), em ${aero.cidade}/${aero.uf}.`
+    : `Aeroporto mais usado para chegar: ${d.aeroporto}.`;
+  const atrativos = d.atrativos.slice(0, 6);
+  const lista = atrativos.length > 1 ? `${atrativos.slice(0, -1).join(', ')} e ${atrativos[atrativos.length - 1]}` : atrativos[0] || '';
+  return {
+    id,
+    slug: d.slug,
+    name: d.nome,
+    state: d.uf,
+    region: d.regiao,
+    category: d.categoria,
+    lat: d.lat,
+    lng: d.lng,
+    summary: d.resumo,
+    description: lista ? `${d.resumo} Destaques: ${lista}.` : d.resumo,
+    bestSeason: '',
+    howToGet: comoChegar,
+    culturalInfo: '',
+    curiosities: '',
+    highlightsJson: atrativos,
+    coverImage: '',
+    avgBudgetDayCents: 0,
+    ratingAvg: 0,
+    reviewCount: 0,
+    featured: false,
+    airportIata: d.aeroporto,
+    source: 'vitrine_brasil',
+    createdAt: agora,
+    updatedAt: agora,
+  };
+}
+
+async function migrateDestinosBrasilV1() {
+  const markerRef = adminDb.collection('_meta').doc('destinos_brasil_v1');
+  const markerSnap = await markerRef.get();
+  if (markerSnap.exists && markerSnap.data()?.completed === true) return;
+  const snap = await adminDb.collection('destinations').get();
+  const slugs = new Set(snap.docs.map((d) => String(d.data()?.slug || '')));
+  let maxId = snap.docs.reduce((m, d) => Math.max(m, Number(d.data()?.id) || Number(d.id) || 0), 0);
+  const agora = new Date().toISOString();
+  const batch = adminDb.batch();
+  let novos = 0;
+  for (const d of DESTINOS_BRASIL) {
+    if (slugs.has(d.slug)) continue;
+    maxId += 1;
+    batch.set(adminDb.collection('destinations').doc(String(maxId)), fichaDoDestino(d, maxId, agora));
+    novos += 1;
+  }
+  batch.set(markerRef, { completed: true, novos, at: agora }, { merge: true });
+  await batch.commit();
+  await ensureCounterAtLeast('destinations', maxId);
 }
 
 /** Planos definidos pelo dono (nov/2026): todos valem 30 dias. Comissão por leilão de 14% a 25%. */

@@ -31,3 +31,16 @@ test('Froc X: botão abre em outra aba com o link certo', () => {
   assert.match(html, /noopener/);
   assert.match(html, /Ir até Bonito de Froc X/);
 });
+
+test('Propaganda Froc X: contagem até a inauguração e chamadas para cadastro e motorista', async () => {
+  const { FrocXPromo, diasAteInauguracao } = await import('../src/components/FrocXPromo.tsx');
+  assert.equal(diasAteInauguracao(new Date('2026-11-27T16:40:00-03:00')), 103);
+  assert.equal(diasAteInauguracao(new Date('2027-04-01T00:00:00-03:00')), 0);
+  const html = renderToStaticMarkup(<FrocXPromo agora={new Date('2026-11-27T16:40:00-03:00')} />);
+  assert.match(html, /Quero ser fundador/);
+  assert.match(html, /seja-motorista\?de=froc-rota/);
+  assert.match(html, /wa\.me/);
+  const depois = renderToStaticMarkup(<FrocXPromo agora={new Date('2027-04-01T00:00:00-03:00')} />);
+  assert.match(depois, /Já está funcionando/);
+  assert.doesNotMatch(depois, /Quero ser fundador/);
+});

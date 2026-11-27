@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   APIProvider,
   AdvancedMarker,
@@ -6,11 +6,13 @@ import {
   Map as GoogleMap,
   Pin,
   useAdvancedMarkerRef,
+  useMap,
 } from '@vis.gl/react-google-maps';
 import { Compass, Navigation, MapPin } from 'lucide-react';
 import { Destination, Listing } from '../types.ts';
 import { useApp } from '../context/AppContext.tsx';
 import { formatMoney } from '../i18n/translations.ts';
+import { BuscaNegociosGoogle, MarcadorNegocio, type NegocioGoogle } from './NegociosGoogle.tsx';
 
 export interface MapMarkerItem {
   id: string;
@@ -42,6 +44,19 @@ const PIN_COLORS: Record<
   experience: { bg: '#39FF14', border: '#111111', glyph: '#111111' },
   gastronomy: { bg: '#FF1493', border: '#FFFFFF', glyph: '#FFFFFF' },
   accommodation: { bg: '#FFD700', border: '#111111', glyph: '#111111' },
+};
+
+/** Leva o mapa até a pessoa: na primeira localização e sempre que ela tocar em "Perto de mim". */
+const CentralizarNoUsuario: React.FC<{ coords: { lat: number; lng: number } | null; pedido: number }> = ({ coords, pedido }) => {
+  const map = useMap();
+  const feito = useRef(-1);
+  useEffect(() => {
+    if (!map || !coords || feito.current === pedido) return;
+    feito.current = pedido;
+    map.panTo(coords);
+    map.setZoom(14);
+  }, [map, coords, pedido]);
+  return null;
 };
 
 const MarkerWithPopup: React.FC<{
@@ -120,6 +135,20 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   const [layerFilter, setLayerFilter] = useState<'all' | MapMarkerItem['kind']>('all');
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [mapFailed, setMapFailed] = useState(false);
+  const [negocios, setNegocios] = useState<NegocioGoogle[]>([]);
+  const [pedidoCentro, setPedidoCentro] = useState(0);
+
+  // O mapa abre onde a pessoa está: pede a localização ao abrir o site e acompanha enquanto ela anda.
+  // A localização fica só no navegador (não vai para o servidor).
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+    const id = navigator.geolocation.watchPosition(
+      (pos) => setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => undefined,
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, []);
 
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 
@@ -131,7 +160,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       subtitle: `Destino · ${d.region}`,
       lat: d.lat,
       lng: d.lng,
-      priceCents: d.avgBudgetDayCents,
+      priceCents: d.avgBudgetDayCents > 0 ? d.avgBudgetDayCents : undefined,
       onSelect: () => onSelectDestination(d),
     }));
 
@@ -174,11 +203,13 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        notify('Localização atualizada na bússola turística.', 'success');
+        setPedidoCentro((n) => n + 1);
+        notify('Mapa centralizado onde você está.', 'success');
       },
       () => {
         notify('Permissão de localização não concedida.', 'error');
-      }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   };
 
@@ -235,6 +266,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                 internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
                 className="w-full h-full"
               >
+                <CentralizarNoUsuario coords={userCoords} pedido={pedidoCentro} />
                 {userCoords && (
                   <AdvancedMarker position={userCoords} title="Sua localização atual">
                     <Pin background="#FF1493" borderColor="#FFFFFF" glyphColor="#FFFFFF" />
@@ -252,7 +284,11 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                     }
                   />
                 ))}
+                {negocios.map((n) => (
+                  <MarcadorNegocio key={n.id} n={n} />
+                ))}
               </GoogleMap>
+              <BuscaNegociosGoogle onResultado={(lista) => setNegocios(lista)} />
             </APIProvider>
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center bg-white">
@@ -301,7 +337,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
           </div>
 
           <div className="pt-4 mt-4 border-t border-[#111111]/10 text-xs text-[#111111]/70 font-medium">
-            Localização real de cada destino, com distância e rota pelo Google Maps.
+            Localização real de cada destino, com distância e rota pelo Google Maps. Aproxime o mapa de uma cidade e use os botões azuis para ver hotéis, restaurantes e atrações cadastrados no Google.
           </div>
         </div>
       </div>
