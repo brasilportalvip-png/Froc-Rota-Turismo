@@ -613,7 +613,7 @@ ${
           bodyHtml: pages.body,
           jsonLd:
             route === 'sobre'
-              ? [{ '@context': 'https://schema.org', '@type': 'TravelAgency', name: SITE_NAME, legalName: EMPRESA.razaoSocial, taxID: EMPRESA.cnpj, email: emailContato(), url: base, logo: `${base}/logo-froc-rota.png`, address: { '@type': 'PostalAddress', streetAddress: EMPRESA.endereco, addressLocality: EMPRESA.cidade, addressRegion: EMPRESA.uf, postalCode: EMPRESA.cep, addressCountry: 'BR' } }]
+              ? [{ '@context': 'https://schema.org', '@type': 'TravelAgency', name: SITE_NAME, taxID: EMPRESA.cnpj, email: emailContato(), url: base, logo: `${base}/logo-froc-rota.png` }]
               : [],
         }),
         'text/html; charset=utf-8',

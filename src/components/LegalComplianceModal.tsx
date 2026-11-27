@@ -19,8 +19,7 @@ export const LegalComplianceModal: React.FC<{ onClose: () => void }> = ({ onClos
           <section className="p-4 rounded-xl border border-[#111111]/15">
             <h4 className="font-extrabold text-[#111111]">Quem é o fornecedor</h4>
             <p className="mt-1">
-              {EMPRESA_SITE.nomeFantasia} · Razão social {EMPRESA_SITE.razaoSocial} · CNPJ {EMPRESA_SITE.cnpj} ·{' '}
-              {EMPRESA_SITE.cidade}/{EMPRESA_SITE.uf}. Endereço completo, e-mail e Cadastur em{' '}
+              {EMPRESA_SITE.nomeFantasia} · CNPJ {EMPRESA_SITE.cnpj}. E-mail e atendimento em{' '}
               <a href="/contato" className="underline font-bold">Contato</a>.
             </p>
           </section>
