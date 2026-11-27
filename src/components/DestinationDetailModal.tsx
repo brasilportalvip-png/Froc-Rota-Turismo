@@ -144,9 +144,13 @@ export const DestinationDetailModal: React.FC<DestinationDetailModalProps> = ({
         <div className="p-6 md:p-8 space-y-8">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-6 border-b border-[#111111]/15">
             <div>
-              <div className="text-xs font-bold text-[#111111]/65">Orçamento médio diário</div>
+              <div className="text-xs font-bold text-[#111111]/65">
+                {destination.avgBudgetDayCents > 0 ? 'Orçamento médio diário' : 'Região'}
+              </div>
               <div className="text-xl font-extrabold text-[#111111] font-mono-tabular mt-1">
-                {formatMoney(destination.avgBudgetDayCents, currency)} / dia
+                {destination.avgBudgetDayCents > 0
+                  ? `${formatMoney(destination.avgBudgetDayCents, currency)} / dia`
+                  : `${destination.region} · ${destination.state}`}
               </div>
             </div>
             <div>
@@ -181,29 +185,31 @@ export const DestinationDetailModal: React.FC<DestinationDetailModalProps> = ({
                   {destination.description}
                 </p>
               </div>
-              <div>
-                <h4 className="text-sm font-semibold text-[#111111]">Cultura, costumes e gastronomia</h4>
-                <p className="text-sm text-[#111111]/70 leading-relaxed mt-1">
-                  {destination.culturalInfo}
-                </p>
-              </div>
-              <div>
-                <h4 className="text-sm font-semibold text-[#111111]">Curiosidades locais</h4>
-                <p className="text-sm text-[#111111]/70 leading-relaxed mt-1">
-                  {destination.curiosities}
-                </p>
-              </div>
+              {destination.culturalInfo ? (
+                <div>
+                  <h4 className="text-sm font-semibold text-[#111111]">Cultura, costumes e gastronomia</h4>
+                  <p className="text-sm text-[#111111]/70 leading-relaxed mt-1">{destination.culturalInfo}</p>
+                </div>
+              ) : null}
+              {destination.curiosities ? (
+                <div>
+                  <h4 className="text-sm font-semibold text-[#111111]">Curiosidades locais</h4>
+                  <p className="text-sm text-[#111111]/70 leading-relaxed mt-1">{destination.curiosities}</p>
+                </div>
+              ) : null}
             </div>
 
             <div className="md:col-span-5 space-y-4 bg-white p-5 rounded-xl border border-[#111111]/15">
-              <div>
-                <div className="text-xs font-semibold text-[#111111] inline-flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-[#111111]" />
-                  <span>Melhor época para visitar</span>
+              {destination.bestSeason ? (
+                <div className="pb-3 border-b border-[#111111]/15">
+                  <div className="text-xs font-semibold text-[#111111] inline-flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-[#111111]" />
+                    <span>Melhor época para visitar</span>
+                  </div>
+                  <p className="text-xs text-[#111111]/70 mt-1 leading-relaxed">{destination.bestSeason}</p>
                 </div>
-                <p className="text-xs text-[#111111]/70 mt-1 leading-relaxed">{destination.bestSeason}</p>
-              </div>
-              <div className="pt-3 border-t border-[#111111]/15">
+              ) : null}
+              <div>
                 <div className="text-xs font-semibold text-[#111111] inline-flex items-center gap-1.5">
                   <MapPin className="w-3.5 h-3.5 text-[#111111]" />
                   <span>Como chegar</span>

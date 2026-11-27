@@ -70,7 +70,7 @@ export const TRANSLATIONS: Record<
     mapSectionTitle: 'Bússola Turística & Mapa Interativo',
     mapSectionSub:
       'Localize destinos, restaurantes, pousadas e embarcações próximos a você com rotas e distâncias em tempo real.',
-    destinationsTitle: 'Destinos Curados do Brasil',
+    destinationsTitle: 'Destinos Procurados do Brasil',
     marketplaceTitle: 'Experiências, Sabores e Hospedagens',
     travelsTitle: 'Central Inteligente de Passagens & Transportes',
     conciergeTitle: 'Froc Rota Concierge — Sua Viagem Completa',
@@ -102,7 +102,7 @@ export const TRANSLATIONS: Record<
     mapSectionTitle: 'Tourism Compass & Interactive Map',
     mapSectionSub:
       'Discover destinations, restaurants, stays, and boat tours nearby with real-time distance and routing.',
-    destinationsTitle: 'Curated Brazilian Destinations',
+    destinationsTitle: 'Most Popular Destinations in Brazil',
     marketplaceTitle: 'Experiences, Dining & Stays',
     travelsTitle: 'Smart Flights & Ground Mobility Hub',
     conciergeTitle: 'Froc Rota Concierge — End-to-End Trips',
@@ -134,7 +134,7 @@ export const TRANSLATIONS: Record<
     mapSectionTitle: 'Brújula Turística y Mapa Interactivo',
     mapSectionSub:
       'Encuentra destinos, restaurantes, posadas y paseos cercanos con distancias y rutas en tiempo real.',
-    destinationsTitle: 'Destinos Curados de Brasil',
+    destinationsTitle: 'Destinos Buscados de Brasil',
     marketplaceTitle: 'Experiencias, Sabores y Alojamientos',
     travelsTitle: 'Central Inteligente de Vuelos y Transporte',
     conciergeTitle: 'Froc Rota Concierge — Viajes Completos',

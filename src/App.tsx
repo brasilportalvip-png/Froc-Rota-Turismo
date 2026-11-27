@@ -7,6 +7,7 @@ import { ResilientImage } from './components/ResilientImage.tsx';
 import { HeroCarrossel } from './components/HeroCarrossel.tsx';
 import { FotoCredito } from './components/FotoCredito.tsx';
 import { InteractiveMap } from './components/InteractiveMap.tsx';
+import { FrocXPromo } from './components/FrocXPromo.tsx';
 import { TravelAndConciergeSection } from './components/TravelAndConciergeSection.tsx';
 import { PWAInstallButton } from './components/PWAInstallButton.tsx';
 import { OfflineIndicator } from './components/OfflineIndicator.tsx';
@@ -18,6 +19,17 @@ import { VitrinePremium } from './components/VitrinePremium.tsx';
 import { IntentOpportunity } from './components/IntentOpportunity.tsx';
 import { AdvertiserCampaign } from './components/AdvertiserCampaign.tsx';
 import { firstName, greeting, trackText } from './lib/intent.ts';
+
+const CATEGORIA_PT: Record<string, string> = {
+  praia: 'Praia',
+  ilha: 'Ilha',
+  cachoeira: 'Cachoeira',
+  parque: 'Parque',
+  historico: 'Histórico',
+  serra: 'Serra',
+  cidade: 'Cidade',
+  ecoturismo: 'Ecoturismo',
+};
 
 // Code splitting for modals & heavy dashboards
 const DestinationDetailModal = React.lazy(() =>
@@ -272,6 +284,8 @@ function FrocRotaPlatform() {
     loadCatalog();
   }, [loadCatalog]);
 
+  const [destLimite, setDestLimite] = useState(12);
+  useEffect(() => setDestLimite(12), [destCategory, destRegion, searchQuery]);
   const filteredDestinations = useMemo(() => {
     return destinations.filter((d) => {
       if (destCategory !== 'all' && d.category !== destCategory) return false;
@@ -603,6 +617,9 @@ function FrocRotaPlatform() {
                     { id: 'cachoeira', label: '💧 Cachoeiras' },
                     { id: 'parque', label: '🏞️ Parques' },
                     { id: 'historico', label: '🏛️ Históricos' },
+                    { id: 'serra', label: '⛰️ Serras' },
+                    { id: 'cidade', label: '🏙️ Cidades' },
+                    { id: 'ecoturismo', label: '🌿 Ecoturismo' },
                   ].map((cat) => (
                     <button
                       key={cat.id}
@@ -650,7 +667,7 @@ function FrocRotaPlatform() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-7">
-                {filteredDestinations.map((dest) => (
+                {filteredDestinations.slice(0, destLimite).map((dest) => (
                   <article
                     key={dest.id}
                     className="group bg-[#FFFFFF] rounded-2xl border border-[#111111]/20 froc-luminous-border overflow-hidden flex flex-col hover:-translate-y-1 transition-transform duration-300"
@@ -670,7 +687,7 @@ function FrocRotaPlatform() {
                       <div>
                         <div className="flex items-center justify-between text-xs text-[#111111]/70">
                           <span className="font-bold uppercase tracking-wide text-[#FF1493]">
-                            {dest.category}
+                            {CATEGORIA_PT[dest.category] || dest.category}
                           </span>
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FFD700] text-[#111111] font-mono-tabular font-extrabold border border-[#111111]">
                             <Star className="w-3.5 h-3.5 fill-[#111111] text-[#111111]" />
@@ -687,10 +704,16 @@ function FrocRotaPlatform() {
 
                       <div className="pt-3 border-t border-[#111111]/10 flex items-center justify-between">
                         <div className="text-xs text-[#111111]/70">
-                          Média diária{' '}
-                          <span className="font-mono-tabular font-extrabold text-[#111111]">
-                            {formatMoney(dest.avgBudgetDayCents, currency)}
-                          </span>
+                          {dest.avgBudgetDayCents > 0 ? (
+                            <>
+                              Média diária{' '}
+                              <span className="font-mono-tabular font-extrabold text-[#111111]">
+                                {formatMoney(dest.avgBudgetDayCents, currency)}
+                              </span>
+                            </>
+                          ) : (
+                            <span>{dest.highlightsJson?.[0] ? `✨ ${dest.highlightsJson[0]}` : `📍 ${dest.state}`}</span>
+                          )}
                         </div>
                         <button
                           type="button"
@@ -703,6 +726,18 @@ function FrocRotaPlatform() {
                     </div>
                   </article>
                 ))}
+              </div>
+            )}
+            {filteredDestinations.length > destLimite && (
+              <div className="mt-6 text-center">
+                <button
+                  type="button"
+                  onClick={() => setDestLimite((n) => n + 12)}
+                  className="min-h-[44px] px-5 py-2.5 rounded-xl bg-[#111111] text-white text-sm font-extrabold"
+                  data-testid="mais-destinos"
+                >
+                  Ver mais destinos ({filteredDestinations.length - destLimite} restantes)
+                </button>
               </div>
             )}
           </section>
@@ -725,6 +760,9 @@ function FrocRotaPlatform() {
               onSelectListing={(l) => setSelectedListing(l)}
             />
           </section>
+
+          {/* Propaganda do Froc X Uber (app de corridas da Froc) */}
+          <FrocXPromo />
 
           {/* VITRINE DO BRASIL — todos os destinos, cada um com página própria no Google */}
           <VitrineBrasil onOpenDestination={openDestinationBySlug} onSearch={searchFromVitrine} />
