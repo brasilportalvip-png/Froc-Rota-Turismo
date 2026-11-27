@@ -1,4 +1,4 @@
-import { EMPRESA, emailContato, enderecoCompleto, numeroCadastur } from './empresa.js';
+import { EMPRESA, emailContato } from './empresa.js';
 import crypto from 'node:crypto';
 
 /**
@@ -216,7 +216,7 @@ ${p.bodyHtml}
 <footer><div class="in">
 <span>© ${new Date().getFullYear()} ${SITE_NAME}</span>
 <a href="/sobre">Sobre</a><a href="/contato">Contato</a><a href="/politica-de-privacidade">Política de Privacidade</a><a href="/termos-de-uso">Termos de Uso</a><a href="/anuncie">Anuncie</a><a href="/sitemap.xml">Sitemap</a>
-</div><div class="in" style="font-size:12px;opacity:.8">${escapeHtml(EMPRESA.razaoSocial)} · CNPJ ${escapeHtml(EMPRESA.cnpj)} · ${escapeHtml(EMPRESA.cidade)}/${escapeHtml(EMPRESA.uf)} · ${contactLine()}</div></footer>
+</div><div class="in" style="font-size:12px;opacity:.8">CNPJ ${escapeHtml(EMPRESA.cnpj)} · ${contactLine()}</div></footer>
 </body>
 </html>`;
 }
@@ -249,12 +249,7 @@ export function contactLine(): string {
 
 /** Bloco de identificação do fornecedor (Decreto 7.962/2013, art. 2º). */
 export function identificacaoHtml(): string {
-  const cad = numeroCadastur();
-  return `<div class="card"><p><strong>${escapeHtml(EMPRESA.nomeFantasia)}</strong><br>Razão social: ${escapeHtml(EMPRESA.razaoSocial)}<br>CNPJ: ${escapeHtml(
-    EMPRESA.cnpj
-  )} · ${escapeHtml(EMPRESA.natureza)}<br>Atividade: ${escapeHtml(EMPRESA.atividade)}<br>Cadastur (Ministério do Turismo): ${
-    cad ? escapeHtml(cad) : 'cadastro em análise'
-  }<br>Endereço: ${escapeHtml(enderecoCompleto())}<br>Responsável: ${escapeHtml(EMPRESA.responsavel)}<br>E-mail: ${contactLine()} · Chat em tempo real no site</p></div>`;
+  return `<div class="card"><p><strong>${escapeHtml(EMPRESA.nomeFantasia)}</strong><br>CNPJ: ${escapeHtml(EMPRESA.cnpj)}<br>E-mail: ${contactLine()}</p></div>`;
 }
 
 export const privacyHtml = () => `
@@ -263,7 +258,7 @@ export const privacyHtml = () => `
 <p>A Froc Rota Turismo é uma plataforma on-line que conecta turistas a parceiros de turismo (passeios, hospedagens, restaurantes e serviços) e oferece busca de passagens e concierge. O controlador dos dados é:</p>
 ${identificacaoHtml()}
 <h2>Encarregado pelo tratamento de dados (DPO)</h2>
-<p>${escapeHtml(EMPRESA.responsavel)}, pelo e-mail ${contactLine()}. É com o encarregado que você exerce os direitos abaixo e tira dúvidas sobre privacidade.</p>
+<p>Pelo e-mail ${contactLine()}. É com o encarregado que você exerce os direitos abaixo e tira dúvidas sobre privacidade.</p>
 <h2>Quais dados coletamos</h2>
 <p>Dados de cadastro (nome, e-mail), dados de verificação de identidade (CPF, data de nascimento, foto do documento e selfie), dados de reservas e pagamentos (processados pelo Mercado Pago; não guardamos número de cartão), mensagens enviadas no chat e dados de navegação (páginas vistas e interesses), estes últimos guardados no seu próprio aparelho e usados somente com o seu consentimento.</p>
 <h2>Para que usamos</h2>

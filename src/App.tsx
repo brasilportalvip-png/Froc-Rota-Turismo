@@ -1094,8 +1094,8 @@ function FrocRotaPlatform() {
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-8 text-[11px] text-[#111111]/70 font-semibold">
-          {EMPRESA_SITE.razaoSocial} · CNPJ {EMPRESA_SITE.cnpj} · {EMPRESA_SITE.cidade}/{EMPRESA_SITE.uf} · Agência de viagens on-line ·{' '}
-          <a href="/contato" className="underline hover:text-[#FF1493]">Atendimento e dados da empresa</a>
+          CNPJ {EMPRESA_SITE.cnpj} ·{' '}
+          <a href="/contato" className="underline hover:text-[#FF1493]">E-mail e atendimento</a>
         </div>
       </footer>
 
