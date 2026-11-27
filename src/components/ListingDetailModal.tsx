@@ -3,6 +3,7 @@ import { Flag, Heart, MapPin, ShieldCheck, Star } from 'lucide-react';
 import { AvailabilitySlot, Listing, ReviewItem } from '../types.ts';
 import { useApp } from '../context/AppContext.tsx';
 import { formatMoney } from '../i18n/translations.ts';
+import { BotaoFrocX } from './BotaoFrocX.tsx';
 import { ResilientImage } from './ResilientImage.tsx';
 import { FuturisticModalHeader } from './DesignSystem.tsx';
 
@@ -138,6 +139,11 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                 <MapPin className="w-3.5 h-3.5 text-[#111111]" />
                 <span>{listing.address}</span>
               </div>
+              <BotaoFrocX
+                destino={{ nome: listing.title, lat: listing.lat, lng: listing.lng, cidade: listing.address }}
+                texto="Ir até aqui de Froc X"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#111111] text-white text-[11px] font-extrabold hover:opacity-90"
+              />
               <div className="inline-flex items-center gap-1 font-mono-tabular text-[#111111] font-semibold">
                 <Star className="w-3.5 h-3.5 fill-[#D9A441] text-[#D9A441]" />
                 <span>{listing.reviewCount > 0 && listing.ratingAvg > 0 ? listing.ratingAvg.toFixed(2) : 'Novo'}</span>

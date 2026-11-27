@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { BellRing, Moon, Plane, ShieldCheck } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { CampoAeroporto } from './CampoAeroporto.tsx';
+import { BotaoFrocX } from './BotaoFrocX.tsx';
+import { acharAeroporto } from '../../api/_lib/aeroportos.ts';
 import { FlightOffers, type OfertaVoo } from './FlightOffers.tsx';
 import { formatMoney, TRANSLATIONS } from '../i18n/translations.ts';
 
@@ -462,6 +464,23 @@ export const TravelAndConciergeSection: React.FC = () => {
                     onEscolher={escolherVoo}
                     escolhendo={escolhendoVoo}
                   />
+                  {(() => {
+                    const chegada = acharAeroporto(flightResponse.offers?.[0]?.slices?.[0]?.destination || destIata) || acharAeroporto(destIata);
+                    if (!chegada || chegada.pais) return null; // Froc X só no Brasil
+                    const nomeAeroporto = chegada.todos ? `Aeroporto de ${chegada.cidade}` : `Aeroporto ${chegada.nome}`;
+                    return (
+                      <div className="mt-4 p-4 rounded-xl border border-[#111111]/15 bg-white flex flex-wrap items-center justify-between gap-3" data-testid="froc-x-aeroporto">
+                        <div className="text-sm text-[#111111]">
+                          <div className="font-bold">Chegando em {chegada.cidade}?</div>
+                          <div className="text-xs text-[#111111]/70">Do aeroporto até o hotel com motorista Froc X, pago pela carteira Froc.</div>
+                        </div>
+                        <BotaoFrocX
+                          origem={{ nome: `${nomeAeroporto} - ${chegada.cidade}/${chegada.uf}`, cidade: chegada.cidade, uf: chegada.uf }}
+                          texto="Pedir Froc X no aeroporto"
+                        />
+                      </div>
+                    );
+                  })()}
                 </div>
               ) : (
                 <div className="text-[#111111]/80">

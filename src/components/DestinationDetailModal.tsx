@@ -7,6 +7,7 @@ import { ResilientImage } from './ResilientImage.tsx';
 import { FotoCredito } from './FotoCredito.tsx';
 import { FuturisticModalHeader } from './DesignSystem.tsx';
 import { PasseiosParceiros } from './PasseiosParceiros.tsx';
+import { BotaoFrocX } from './BotaoFrocX.tsx';
 
 interface DestinationDetailModalProps {
   destination: Destination;
@@ -132,6 +133,10 @@ export const DestinationDetailModal: React.FC<DestinationDetailModalProps> = ({
                 <Navigation className="w-3.5 h-3.5" />
                 <span>Abrir no Mapa</span>
               </a>
+              <BotaoFrocX
+                destino={{ nome: destination.name, lat: destination.lat, lng: destination.lng, cidade: destination.name, uf: destination.state }}
+                texto={`Ir até ${destination.name} de Froc X`}
+              />
             </div>
           </div>
         </div>
