@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Eye, EyeOff, Plane } from 'lucide-react';
 import { acharAeroporto } from '../../api/_lib/aeroportos.ts';
+import type { AppCurrency } from '../types.ts';
 
 /** Resultado de voos no estilo dos grandes buscadores: ida e volta completas, escalas, espera e troca de avião. */
 
@@ -211,7 +212,7 @@ const Detalhe: React.FC<{ rotulo: string; t: TrechoVoo }> = ({ rotulo, t }) => (
 
 export const FlightOffers: React.FC<{
   offers: OfertaVoo[];
-  formatMoney: (cents: number, currency: string) => string;
+  formatMoney: (cents: number, currency: AppCurrency) => string;
   passageiros: number;
   onEscolher?: (oferta: OfertaVoo, resumo: string) => void;
   escolhendo?: string | null;
